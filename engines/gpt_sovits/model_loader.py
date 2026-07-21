@@ -12,10 +12,19 @@ Version detection follows the official process_ckpt.py three-layer strategy:
 """
 
 import os
+import sys
 import hashlib
 import traceback
 from io import BytesIO
 from typing import Dict, Optional, Tuple
+
+# Ensure GPT-SoVITS source is importable
+_GPT_SOVITS_SRC = os.environ.get(
+    "GPT_SOVITS_PATH",
+    os.path.join(os.path.dirname(__file__), "GPT_SoVITS_src")
+)
+if os.path.isdir(_GPT_SOVITS_SRC) and _GPT_SOVITS_SRC not in sys.path:
+    sys.path.insert(0, _GPT_SOVITS_SRC)
 
 import torch
 

@@ -11,8 +11,17 @@ Supports v2/v2Pro/v2ProPlus.
 """
 
 import os
+import sys
 import time
 import traceback
+
+# Ensure GPT-SoVITS source is importable
+_GPT_SOVITS_SRC = os.environ.get(
+    "GPT_SOVITS_PATH",
+    os.path.join(os.path.dirname(__file__), "GPT_SoVITS_src")
+)
+if os.path.isdir(_GPT_SOVITS_SRC) and _GPT_SOVITS_SRC not in sys.path:
+    sys.path.insert(0, _GPT_SOVITS_SRC)
 
 import numpy as np
 import torch

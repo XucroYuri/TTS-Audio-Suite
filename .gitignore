@@ -2,6 +2,9 @@
 ComfyUI/
 ComfyUI_frontend/
 
+# Bundled GPT-SoVITS source (clone separately)
+engines/gpt_sovits/GPT_SoVITS_src/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
