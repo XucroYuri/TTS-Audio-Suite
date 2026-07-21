@@ -1,4 +1,4 @@
-# System imports - needed throughout the module
+﻿# System imports - needed throughout the module
 import sys
 import os
 
@@ -58,15 +58,15 @@ def _check_transformers_version():
         current_version = transformers.__version__
 
         if version.parse(current_version) < version.parse(required_version):
-            print(f"🚨 COMPATIBILITY WARNING:")
+            print(f"[WARN]  COMPATIBILITY WARNING:")
             print(f"   Transformers version {current_version} is too old (requires >={required_version})")
             print(f"   This WILL cause errors like 'DynamicCache property has no setter'")
-            print(f"   📋 SOLUTION: Run this command to upgrade:")
+            print(f"   [INFO]  SOLUTION: Run this command to upgrade:")
             print(f"   pip install --upgrade transformers>={required_version}")
             print(f"   (Or use your environment's package manager)")
             print()
     except Exception as e:
-        print(f"⚠️ Could not check transformers version: {e}")
+        print(f"[WARN] Could not check transformers version: {e}")
         print("   If you encounter DynamicCache errors, upgrade transformers to >=4.51.3")
 
 # Import nodes using direct file loading to avoid package path issues
@@ -86,7 +86,7 @@ try:
     ChatterBoxEngineNode = chatterbox_engine_module.ChatterBoxEngineNode
     CHATTERBOX_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ ChatterBox Engine failed: {e}")
+    print(f"[FAIL] ChatterBox Engine failed: {e}")
     CHATTERBOX_ENGINE_AVAILABLE = False
 
 try:
@@ -94,7 +94,7 @@ try:
     F5TTSEngineNode = f5tts_engine_module.F5TTSEngineNode
     F5TTS_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ F5 TTS Engine failed: {e}")
+    print(f"[FAIL] F5 TTS Engine failed: {e}")
     F5TTS_ENGINE_AVAILABLE = False
 
 try:
@@ -102,7 +102,7 @@ try:
     HiggsAudioEngineNode = higgs_audio_engine_module.HiggsAudioEngineNode
     HIGGS_AUDIO_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Higgs Audio Engine failed: {e}")
+    print(f"[FAIL] Higgs Audio Engine failed: {e}")
     HIGGS_AUDIO_ENGINE_AVAILABLE = False
 
 try:
@@ -110,7 +110,7 @@ try:
     HiggsAudioV3EngineNode = higgs_audio_v3_engine_module.HiggsAudioV3EngineNode
     HIGGS_AUDIO_V3_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Higgs Audio v3 Engine failed: {e}")
+    print(f"[FAIL] Higgs Audio v3 Engine failed: {e}")
     HIGGS_AUDIO_V3_ENGINE_AVAILABLE = False
 
 try:
@@ -118,7 +118,7 @@ try:
     StepAudioEditXEngineNode = step_audio_editx_engine_module.StepAudioEditXEngineNode
     STEP_AUDIO_EDITX_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Step Audio EditX Engine failed: {e}")
+    print(f"[FAIL] Step Audio EditX Engine failed: {e}")
     STEP_AUDIO_EDITX_ENGINE_AVAILABLE = False
 
 try:
@@ -126,7 +126,7 @@ try:
     VibeVoiceEngineNode = vibevoice_engine_module.VibeVoiceEngineNode
     VIBEVOICE_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ VibeVoice Engine failed: {e}")
+    print(f"[FAIL] VibeVoice Engine failed: {e}")
     VIBEVOICE_ENGINE_AVAILABLE = False
 
 try:
@@ -134,7 +134,7 @@ try:
     Qwen3TTSEngineNode = qwen3_tts_engine_module.Qwen3TTSEngineNode
     QWEN3_TTS_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Qwen3-TTS Engine failed: {e}")
+    print(f"[FAIL] Qwen3-TTS Engine failed: {e}")
     QWEN3_TTS_ENGINE_AVAILABLE = False
 
 try:
@@ -144,7 +144,7 @@ try:
     MossSoundEffectV2EngineNode = moss_soundeffect_v2_engine_module.MossSoundEffectV2EngineNode
     MOSS_SOUNDEFFECT_V2_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ MOSS-SoundEffect v2 Engine failed: {e}")
+    print(f"[FAIL] MOSS-SoundEffect v2 Engine failed: {e}")
     MOSS_SOUNDEFFECT_V2_ENGINE_AVAILABLE = False
 
 try:
@@ -152,7 +152,7 @@ try:
     MossTTSEngineNode = moss_tts_engine_module.MossTTSEngineNode
     MOSS_TTS_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ MOSS-TTS Engine failed: {e}")
+    print(f"[FAIL] MOSS-TTS Engine failed: {e}")
     MOSS_TTS_ENGINE_AVAILABLE = False
 
 try:
@@ -160,7 +160,7 @@ try:
     GraniteASREngineNode = granite_asr_engine_module.GraniteASREngineNode
     GRANITE_ASR_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Granite ASR Engine failed: {e}")
+    print(f"[FAIL] Granite ASR Engine failed: {e}")
     GRANITE_ASR_ENGINE_AVAILABLE = False
 
 try:
@@ -168,7 +168,7 @@ try:
     EchoTTSEngineNode = echo_tts_engine_module.EchoTTSEngineNode
     ECHO_TTS_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Echo-TTS Engine failed: {e}")
+    print(f"[FAIL] Echo-TTS Engine failed: {e}")
     ECHO_TTS_ENGINE_AVAILABLE = False
 
 try:
@@ -176,7 +176,7 @@ try:
     DotsTTSEngineNode = dots_tts_engine_module.DotsTTSEngineNode
     DOTS_TTS_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Dots TTS Engine failed: {e}")
+    print(f"[FAIL] Dots TTS Engine failed: {e}")
     DOTS_TTS_ENGINE_AVAILABLE = False
 
 try:
@@ -184,7 +184,7 @@ try:
     FishAudioS2EngineNode = fish_audio_s2_engine_module.FishAudioS2EngineNode
     FISH_AUDIO_S2_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Fish Audio S2 Pro Engine failed: {e}")
+    print(f"[FAIL] Fish Audio S2 Pro Engine failed: {e}")
     FISH_AUDIO_S2_ENGINE_AVAILABLE = False
 
 try:
@@ -192,7 +192,7 @@ try:
     OmniVoiceEngineNode = omnivoice_engine_module.OmniVoiceEngineNode
     OMNIVOICE_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ OmniVoice Engine failed: {e}")
+    print(f"[FAIL] OmniVoice Engine failed: {e}")
     OMNIVOICE_ENGINE_AVAILABLE = False
 
 try:
@@ -200,7 +200,7 @@ try:
     OmniVoiceInstructionBuilderNode = omnivoice_instruction_builder_module.OmniVoiceInstructionBuilderNode
     OMNIVOICE_INSTRUCTION_BUILDER_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Visual Tag Builder failed: {e}")
+    print(f"[FAIL] Visual Tag Builder failed: {e}")
     OMNIVOICE_INSTRUCTION_BUILDER_AVAILABLE = False
 
 try:
@@ -208,7 +208,7 @@ try:
     ChatterBoxOfficial23LangEngineNode = chatterbox_official_23lang_engine_module.ChatterBoxOfficial23LangEngineNode
     CHATTERBOX_OFFICIAL_23LANG_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ ChatterBox Official 23-Lang Engine failed: {e}")
+    print(f"[FAIL] ChatterBox Official 23-Lang Engine failed: {e}")
     CHATTERBOX_OFFICIAL_23LANG_ENGINE_AVAILABLE = False
 
 try:
@@ -216,7 +216,7 @@ try:
     IndexTTSEngineNode = index_tts_engine_module.IndexTTSEngineNode
     INDEX_TTS_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ IndexTTS-2 Engine failed: {e}")
+    print(f"[FAIL] IndexTTS-2 Engine failed: {e}")
     INDEX_TTS_ENGINE_AVAILABLE = False
 
 try:
@@ -224,7 +224,7 @@ try:
     CosyVoiceEngineNode = cosyvoice_engine_module.CosyVoiceEngineNode
     COSYVOICE_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ CosyVoice3 Engine failed: {e}")
+    print(f"[FAIL] CosyVoice3 Engine failed: {e}")
     COSYVOICE_ENGINE_AVAILABLE = False
 
 try:
@@ -232,7 +232,7 @@ try:
     GPTSovitsEngineNode = gpt_sovits_engine_module.GPTSovitsEngineNode
     GPT_SOVITS_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ GPT-SoVITS Engine failed: {e}")
+    print(f"[FAIL] GPT-SoVITS Engine failed: {e}")
     GPT_SOVITS_ENGINE_AVAILABLE = False
 
 # IndexTTS-2 Emotion Options Node
@@ -241,7 +241,7 @@ try:
     IndexTTSEmotionOptionsNode = index_tts_emotion_options_module.IndexTTSEmotionOptionsNode
     INDEX_TTS_EMOTION_OPTIONS_AVAILABLE = True
 except Exception as e:
-    print(f"❌ IndexTTS-2 Emotion Options failed: {e}")
+    print(f"[FAIL] IndexTTS-2 Emotion Options failed: {e}")
     INDEX_TTS_EMOTION_OPTIONS_AVAILABLE = False
 
 # QwenEmotion Text Analysis Node
@@ -250,7 +250,7 @@ try:
     QwenEmotionNode = qwen_emotion_module.QwenEmotionNode
     QWEN_EMOTION_AVAILABLE = True
 except Exception as e:
-    print(f"❌ QwenEmotion Text Analysis failed: {e}")
+    print(f"[FAIL] QwenEmotion Text Analysis failed: {e}")
     QWEN_EMOTION_AVAILABLE = False
 
 # Load shared nodes
@@ -259,7 +259,7 @@ try:
     CharacterVoicesNode = character_voices_module.CharacterVoicesNode
     CHARACTER_VOICES_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Character Voices failed: {e}")
+    print(f"[FAIL] Character Voices failed: {e}")
     CHARACTER_VOICES_AVAILABLE = False
 
 try:
@@ -267,7 +267,7 @@ try:
     RefreshVoiceCacheNode = refresh_voice_cache_module.RefreshVoiceCacheNode
     REFRESH_VOICE_CACHE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Refresh Voice Cache failed: {e}")
+    print(f"[FAIL] Refresh Voice Cache failed: {e}")
     REFRESH_VOICE_CACHE_AVAILABLE = False
 
 try:
@@ -275,7 +275,7 @@ try:
     SaveCharacterVoiceNode = save_character_voice_module.SaveCharacterVoiceNode
     SAVE_CHARACTER_VOICE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Save Character Voice failed: {e}")
+    print(f"[FAIL] Save Character Voice failed: {e}")
     SAVE_CHARACTER_VOICE_AVAILABLE = False
 
 try:
@@ -283,7 +283,7 @@ try:
     UnifiedVoiceDesignerNode = unified_voice_designer_module.UnifiedVoiceDesignerNode
     UNIFIED_VOICE_DESIGNER_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Voice Designer failed: {e}")
+    print(f"[FAIL] Voice Designer failed: {e}")
     UNIFIED_VOICE_DESIGNER_AVAILABLE = False
 
 # Load unified nodes
@@ -292,7 +292,7 @@ try:
     UnifiedTTSTextNode = unified_text_module.UnifiedTTSTextNode
     UNIFIED_TEXT_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Unified TTS Text failed: {e}")
+    print(f"[FAIL] Unified TTS Text failed: {e}")
     UNIFIED_TEXT_AVAILABLE = False
 
 try:
@@ -300,7 +300,7 @@ try:
     UnifiedTTSSRTNode = unified_srt_module.UnifiedTTSSRTNode
     UNIFIED_SRT_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Unified TTS SRT failed: {e}")
+    print(f"[FAIL] Unified TTS SRT failed: {e}")
     UNIFIED_SRT_AVAILABLE = False
 
 try:
@@ -308,7 +308,7 @@ try:
     UnifiedSoundEffectsNode = unified_sound_effects_module.UnifiedSoundEffectsNode
     UNIFIED_SOUND_EFFECTS_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Sound Effects failed: {e}")
+    print(f"[FAIL] Sound Effects failed: {e}")
     UNIFIED_SOUND_EFFECTS_AVAILABLE = False
 
 try:
@@ -316,7 +316,7 @@ try:
     UnifiedVoiceChangerNode = unified_vc_module.UnifiedVoiceChangerNode
     UNIFIED_VC_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Unified Voice Changer failed: {e}")
+    print(f"[FAIL] Unified Voice Changer failed: {e}")
     UNIFIED_VC_AVAILABLE = False
 
 try:
@@ -324,7 +324,7 @@ try:
     UnifiedASRTranscribeNode = unified_asr_module.UnifiedASRTranscribeNode
     UNIFIED_ASR_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Unified ASR Transcribe failed: {e}")
+    print(f"[FAIL] Unified ASR Transcribe failed: {e}")
     UNIFIED_ASR_AVAILABLE = False
 
 try:
@@ -332,7 +332,7 @@ try:
     UnifiedModelTrainingNode = unified_training_module.UnifiedModelTrainingNode
     UNIFIED_TRAINING_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Unified Model Training failed: {e}")
+    print(f"[FAIL] Unified Model Training failed: {e}")
     UNIFIED_TRAINING_AVAILABLE = False
 
 try:
@@ -340,7 +340,7 @@ try:
     SRTAdvancedOptionsNode = srt_advanced_options_module.SRTAdvancedOptionsNode
     SRT_ADVANCED_OPTIONS_AVAILABLE = True
 except Exception as e:
-    print(f"❌ SRT Advanced Options failed: {e}")
+    print(f"[FAIL] SRT Advanced Options failed: {e}")
     SRT_ADVANCED_OPTIONS_AVAILABLE = False
 
 try:
@@ -348,7 +348,7 @@ try:
     TextToSRTBuilderNode = text_to_srt_builder_module.TextToSRTBuilderNode
     TEXT_TO_SRT_BUILDER_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Text to SRT Builder failed: {e}")
+    print(f"[FAIL] Text to SRT Builder failed: {e}")
     TEXT_TO_SRT_BUILDER_AVAILABLE = False
 
 # Load support nodes
@@ -357,7 +357,7 @@ try:
     ChatterBoxVoiceCapture = audio_recorder_module.ChatterBoxVoiceCapture
     VOICE_CAPTURE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Voice Capture failed: {e}")
+    print(f"[FAIL] Voice Capture failed: {e}")
     VOICE_CAPTURE_AVAILABLE = False
 
 # Load audio analysis nodes
@@ -366,7 +366,7 @@ try:
     AudioAnalyzerNode = audio_analyzer_module.AudioAnalyzerNode
     AUDIO_ANALYZER_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Audio Analyzer failed: {e}")
+    print(f"[FAIL] Audio Analyzer failed: {e}")
     AUDIO_ANALYZER_AVAILABLE = False
 
 try:
@@ -374,7 +374,7 @@ try:
     AudioAnalyzerOptionsNode = audio_analyzer_options_module.AudioAnalyzerOptionsNode
     AUDIO_ANALYZER_OPTIONS_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Audio Analyzer Options failed: {e}")
+    print(f"[FAIL] Audio Analyzer Options failed: {e}")
     AUDIO_ANALYZER_OPTIONS_AVAILABLE = False
 
 # Load F5-TTS Edit nodes
@@ -383,7 +383,7 @@ try:
     F5TTSEditNode = f5tts_edit_module.F5TTSEditNode
     F5TTS_EDIT_AVAILABLE = True
 except Exception as e:
-    print(f"❌ F5-TTS Edit failed: {e}")
+    print(f"[FAIL] F5-TTS Edit failed: {e}")
     F5TTS_EDIT_AVAILABLE = False
 
 try:
@@ -391,7 +391,7 @@ try:
     F5TTSEditOptionsNode = f5tts_edit_options_module.F5TTSEditOptionsNode
     F5TTS_EDIT_OPTIONS_AVAILABLE = True
 except Exception as e:
-    print(f"❌ F5-TTS Edit Options failed: {e}")
+    print(f"[FAIL] F5-TTS Edit Options failed: {e}")
     F5TTS_EDIT_OPTIONS_AVAILABLE = False
 
 # Load Step Audio EditX Audio Editor node
@@ -400,7 +400,7 @@ try:
     StepAudioEditXAudioEditorNode = step_audio_editx_editor_module.StepAudioEditXAudioEditorNode
     STEP_AUDIO_EDITX_EDITOR_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Step Audio EditX Audio Editor failed: {e}")
+    print(f"[FAIL] Step Audio EditX Audio Editor failed: {e}")
     STEP_AUDIO_EDITX_EDITOR_AVAILABLE = False
 
 # Load RVC nodes
@@ -409,7 +409,7 @@ try:
     RVCEngineNode = rvc_engine_module.RVCEngineNode
     RVC_ENGINE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ RVC Engine failed: {e}")
+    print(f"[FAIL] RVC Engine failed: {e}")
     RVC_ENGINE_AVAILABLE = False
 
 try:
@@ -417,7 +417,7 @@ try:
     RVCPitchOptionsNode = rvc_pitch_options_module.RVCPitchOptionsNode
     RVC_PITCH_OPTIONS_AVAILABLE = True
 except Exception as e:
-    print(f"❌ RVC Pitch Options failed: {e}")
+    print(f"[FAIL] RVC Pitch Options failed: {e}")
     RVC_PITCH_OPTIONS_AVAILABLE = False
 
 try:
@@ -425,7 +425,7 @@ try:
     VocalRemovalNode = vocal_removal_module.VocalRemovalNode
     VOCAL_REMOVAL_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Vocal/Noise Removal failed: {e}")
+    print(f"[FAIL] Vocal/Noise Removal failed: {e}")
     VOCAL_REMOVAL_AVAILABLE = False
 
 try:
@@ -433,7 +433,7 @@ try:
     MergeAudioNode = merge_audio_module.MergeAudioNode
     MERGE_AUDIO_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Merge Audio failed: {e}")
+    print(f"[FAIL] Merge Audio failed: {e}")
     MERGE_AUDIO_AVAILABLE = False
 
 try:
@@ -441,7 +441,7 @@ try:
     VoiceFixerNode = voice_fixer_module.VoiceFixerNode
     VOICE_FIXER_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Voice Fixer Audio Restoration failed: {e}")
+    print(f"[FAIL] Voice Fixer Audio Restoration failed: {e}")
     VOICE_FIXER_AVAILABLE = False
 
 try:
@@ -449,7 +449,7 @@ try:
     LoadRVCModelNode = load_rvc_model_module.LoadRVCModelNode
     LOAD_RVC_MODEL_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Load RVC Character Model failed: {e}")
+    print(f"[FAIL] Load RVC Character Model failed: {e}")
     LOAD_RVC_MODEL_AVAILABLE = False
 
 try:
@@ -457,7 +457,7 @@ try:
     RVCDatasetPrepNode = rvc_dataset_prep_module.RVCDatasetPrepNode
     RVC_DATASET_PREP_AVAILABLE = True
 except Exception as e:
-    print(f"❌ RVC Dataset Prep failed: {e}")
+    print(f"[FAIL] RVC Dataset Prep failed: {e}")
     RVC_DATASET_PREP_AVAILABLE = False
 
 try:
@@ -465,7 +465,7 @@ try:
     RVCTrainingConfigNode = rvc_training_config_module.RVCTrainingConfigNode
     RVC_TRAINING_CONFIG_AVAILABLE = True
 except Exception as e:
-    print(f"❌ RVC Training Config failed: {e}")
+    print(f"[FAIL] RVC Training Config failed: {e}")
     RVC_TRAINING_CONFIG_AVAILABLE = False
 
 try:
@@ -473,7 +473,7 @@ try:
     MossDatasetPrepNode = moss_dataset_prep_module.MossDatasetPrepNode
     MOSS_DATASET_PREP_AVAILABLE = True
 except Exception as e:
-    print(f"❌ MOSS Dataset Prep failed: {e}")
+    print(f"[FAIL] MOSS Dataset Prep failed: {e}")
     MOSS_DATASET_PREP_AVAILABLE = False
 
 try:
@@ -481,7 +481,7 @@ try:
     MossTrainingConfigNode = moss_training_config_module.MossTrainingConfigNode
     MOSS_TRAINING_CONFIG_AVAILABLE = True
 except Exception as e:
-    print(f"❌ MOSS Training Config failed: {e}")
+    print(f"[FAIL] MOSS Training Config failed: {e}")
     MOSS_TRAINING_CONFIG_AVAILABLE = False
 
 try:
@@ -489,7 +489,7 @@ try:
     MossClipStagingNode = moss_clip_staging_module.MossClipStagingNode
     MOSS_CLIP_STAGING_AVAILABLE = True
 except Exception as e:
-    print(f"❌ MOSS Clip Staging failed: {e}")
+    print(f"[FAIL] MOSS Clip Staging failed: {e}")
     MOSS_CLIP_STAGING_AVAILABLE = False
 
 try:
@@ -497,7 +497,7 @@ try:
     MossDatasetRowsNode = moss_dataset_rows_module.MossDatasetRowsNode
     MOSS_DATASET_ROWS_AVAILABLE = True
 except Exception as e:
-    print(f"❌ MOSS Dataset Rows failed: {e}")
+    print(f"[FAIL] MOSS Dataset Rows failed: {e}")
     MOSS_DATASET_ROWS_AVAILABLE = False
 
 try:
@@ -505,7 +505,7 @@ try:
     PhonemeTextNormalizer = phoneme_text_normalizer_module.PhonemeTextNormalizer
     PHONEME_TEXT_NORMALIZER_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Phoneme Text Normalizer failed: {e}")
+    print(f"[FAIL] Phoneme Text Normalizer failed: {e}")
     PHONEME_TEXT_NORMALIZER_AVAILABLE = False
 
 try:
@@ -513,7 +513,7 @@ try:
     ASRPunctuationTruecaseNode = asr_punctuation_truecase_module.ASRPunctuationTruecaseNode
     ASR_PUNCTUATION_TRUECASE_AVAILABLE = True
 except Exception as e:
-    print(f"❌ ASR Punctuation / Truecase failed: {e}")
+    print(f"[FAIL] ASR Punctuation / Truecase failed: {e}")
     ASR_PUNCTUATION_TRUECASE_AVAILABLE = False
 
 try:
@@ -521,7 +521,7 @@ try:
     StringMultilineTagEditor = string_multiline_tag_editor_module.StringMultilineTagEditor
     STRING_MULTILINE_TAG_EDITOR_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Multiline TTS Tag Editor failed: {e}")
+    print(f"[FAIL] Multiline TTS Tag Editor failed: {e}")
     STRING_MULTILINE_TAG_EDITOR_AVAILABLE = False
 
 # Import foundation components for compatibility
@@ -605,15 +605,15 @@ try:
         FFmpegTimeStretcher = modules.get("FFmpegTimeStretcher")
         
         if IS_DEV:
-            print(f"✅ SRT TTS node available! (source: {source})")
+            print(f"[OK] SRT TTS node available! (source: {source})")
     else:
         SRT_SUPPORT_AVAILABLE = False
         if IS_DEV:
-            print("❌ SRT support not available")
+            print("[FAIL] SRT support not available")
 except Exception:
     SRT_SUPPORT_AVAILABLE = False
     if IS_DEV:
-        print("❌ SRT support initialization failed")
+        print("[FAIL] SRT support initialization failed")
 
 # The new unified architecture handles engine availability internally
 
@@ -624,59 +624,59 @@ NODE_DISPLAY_NAME_MAPPINGS = {}
 # Register engine nodes
 if CHATTERBOX_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["ChatterBoxEngineNode"] = ChatterBoxEngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["ChatterBoxEngineNode"] = "⚙️ ChatterBox TTS Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["ChatterBoxEngineNode"] = "⚙ ChatterBox TTS Engine"
 
 if F5TTS_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["F5TTSEngineNode"] = F5TTSEngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["F5TTSEngineNode"] = "⚙️ F5 TTS Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["F5TTSEngineNode"] = "⚙ F5 TTS Engine"
 
 if HIGGS_AUDIO_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["HiggsAudioEngineNode"] = HiggsAudioEngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["HiggsAudioEngineNode"] = "⚙️ Higgs Audio 2 Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["HiggsAudioEngineNode"] = "⚙ Higgs Audio 2 Engine"
 
 if HIGGS_AUDIO_V3_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["HiggsAudioV3EngineNode"] = HiggsAudioV3EngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["HiggsAudioV3EngineNode"] = "⚙️ Higgs Audio v3 Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["HiggsAudioV3EngineNode"] = "⚙ Higgs Audio v3 Engine"
 
 if STEP_AUDIO_EDITX_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["StepAudioEditXEngineNode"] = StepAudioEditXEngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["StepAudioEditXEngineNode"] = "⚙️ Step Audio EditX Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["StepAudioEditXEngineNode"] = "⚙ Step Audio EditX Engine"
 
 if VIBEVOICE_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["VibeVoiceEngineNode"] = VibeVoiceEngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["VibeVoiceEngineNode"] = "⚙️ VibeVoice Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["VibeVoiceEngineNode"] = "⚙ VibeVoice Engine"
 
 if QWEN3_TTS_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["Qwen3TTSEngineNode"] = Qwen3TTSEngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["Qwen3TTSEngineNode"] = "⚙️ Qwen3-TTS Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["Qwen3TTSEngineNode"] = "⚙ Qwen3-TTS Engine"
 
 if MOSS_TTS_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["MossTTSEngineNode"] = MossTTSEngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["MossTTSEngineNode"] = "⚙️ MOSS-TTS Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["MossTTSEngineNode"] = "⚙ MOSS-TTS Engine"
 
 if MOSS_SOUNDEFFECT_V2_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["MossSoundEffectV2EngineNode"] = MossSoundEffectV2EngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["MossSoundEffectV2EngineNode"] = "⚙️ MOSS SoundEffect v2 Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["MossSoundEffectV2EngineNode"] = "⚙ MOSS SoundEffect v2 Engine"
 
 if GRANITE_ASR_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["GraniteASREngineNode"] = GraniteASREngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["GraniteASREngineNode"] = "⚙️ Granite ASR Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["GraniteASREngineNode"] = "⚙ Granite ASR Engine"
 
 if ECHO_TTS_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["EchoTTSEngineNode"] = EchoTTSEngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["EchoTTSEngineNode"] = "⚙️ Echo-TTS Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["EchoTTSEngineNode"] = "⚙ Echo-TTS Engine"
 
 if DOTS_TTS_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["DotsTTSEngineNode"] = DotsTTSEngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["DotsTTSEngineNode"] = "⚙️ Dots TTS Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["DotsTTSEngineNode"] = "⚙ Dots TTS Engine"
 
 if FISH_AUDIO_S2_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["FishAudioS2EngineNode"] = FishAudioS2EngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["FishAudioS2EngineNode"] = "⚙️ Fish Audio S2 Pro Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["FishAudioS2EngineNode"] = "⚙ Fish Audio S2 Pro Engine"
 
 if OMNIVOICE_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["OmniVoiceEngineNode"] = OmniVoiceEngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["OmniVoiceEngineNode"] = "⚙️ OmniVoice Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["OmniVoiceEngineNode"] = "⚙ OmniVoice Engine"
 
 if OMNIVOICE_INSTRUCTION_BUILDER_AVAILABLE:
     NODE_CLASS_MAPPINGS["OmniVoiceInstructionBuilderNode"] = OmniVoiceInstructionBuilderNode
@@ -684,19 +684,19 @@ if OMNIVOICE_INSTRUCTION_BUILDER_AVAILABLE:
 
 if CHATTERBOX_OFFICIAL_23LANG_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["ChatterBoxOfficial23LangEngineNode"] = ChatterBoxOfficial23LangEngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["ChatterBoxOfficial23LangEngineNode"] = "⚙️ ChatterBox Official 23-Lang Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["ChatterBoxOfficial23LangEngineNode"] = "⚙ ChatterBox Official 23-Lang Engine"
 
 if INDEX_TTS_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["IndexTTSEngineNode"] = IndexTTSEngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["IndexTTSEngineNode"] = "⚙️ IndexTTS-2 Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["IndexTTSEngineNode"] = "⚙ IndexTTS-2 Engine"
 
 if COSYVOICE_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["CosyVoiceEngineNode"] = CosyVoiceEngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["CosyVoiceEngineNode"] = "⚙️ CosyVoice3 Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["CosyVoiceEngineNode"] = "⚙ CosyVoice3 Engine"
 
 if GPT_SOVITS_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["GPTSovitsEngineNode"] = GPTSovitsEngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["GPTSovitsEngineNode"] = "⚙️ GPT-SoVITS Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["GPTSovitsEngineNode"] = "⚙ GPT-SoVITS Engine"
 
 if INDEX_TTS_EMOTION_OPTIONS_AVAILABLE:
     NODE_CLASS_MAPPINGS["IndexTTSEmotionOptionsNode"] = IndexTTSEmotionOptionsNode
@@ -732,7 +732,7 @@ if UNIFIED_SRT_AVAILABLE:
 
 if UNIFIED_SOUND_EFFECTS_AVAILABLE:
     NODE_CLASS_MAPPINGS["UnifiedSoundEffectsNode"] = UnifiedSoundEffectsNode
-    NODE_DISPLAY_NAME_MAPPINGS["UnifiedSoundEffectsNode"] = "🌩️ Sound Effects"
+    NODE_DISPLAY_NAME_MAPPINGS["UnifiedSoundEffectsNode"] = "🌩 Sound Effects"
 
 if UNIFIED_VC_AVAILABLE:
     NODE_CLASS_MAPPINGS["UnifiedVoiceChangerNode"] = UnifiedVoiceChangerNode
@@ -740,7 +740,7 @@ if UNIFIED_VC_AVAILABLE:
 
 if UNIFIED_ASR_AVAILABLE:
     NODE_CLASS_MAPPINGS["UnifiedASRTranscribeNode"] = UnifiedASRTranscribeNode
-    NODE_DISPLAY_NAME_MAPPINGS["UnifiedASRTranscribeNode"] = "✏️ ASR Transcribe"
+    NODE_DISPLAY_NAME_MAPPINGS["UnifiedASRTranscribeNode"] = "✏ ASR Transcribe"
 
 if UNIFIED_TRAINING_AVAILABLE:
     NODE_CLASS_MAPPINGS["UnifiedModelTrainingNode"] = UnifiedModelTrainingNode
@@ -757,7 +757,7 @@ if TEXT_TO_SRT_BUILDER_AVAILABLE:
 # Register legacy support nodes
 if VOICE_CAPTURE_AVAILABLE:
     NODE_CLASS_MAPPINGS["ChatterBoxVoiceCapture"] = ChatterBoxVoiceCapture
-    NODE_DISPLAY_NAME_MAPPINGS["ChatterBoxVoiceCapture"] = "🎙️ Voice Capture"
+    NODE_DISPLAY_NAME_MAPPINGS["ChatterBoxVoiceCapture"] = "🎙 Voice Capture"
 
 if AUDIO_ANALYZER_AVAILABLE:
     NODE_CLASS_MAPPINGS["ChatterBoxAudioAnalyzer"] = AudioAnalyzerNode
@@ -785,7 +785,7 @@ try:
     MouthMovementAnalyzerNode = mouth_movement_module.MouthMovementAnalyzerNode
     MOUTH_MOVEMENT_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Mouth Movement Analyzer failed: {e}")
+    print(f"[FAIL] Mouth Movement Analyzer failed: {e}")
     MOUTH_MOVEMENT_AVAILABLE = False
 
 try:
@@ -793,13 +793,13 @@ try:
     VisemeDetectionOptionsNode = viseme_options_module.VisemeDetectionOptionsNode
     VISEME_OPTIONS_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Viseme Options failed: {e}")
+    print(f"[FAIL] Viseme Options failed: {e}")
     VISEME_OPTIONS_AVAILABLE = False
 
 # Register RVC nodes
 if RVC_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["RVCEngineNode"] = RVCEngineNode
-    NODE_DISPLAY_NAME_MAPPINGS["RVCEngineNode"] = "⚙️ RVC Engine"
+    NODE_DISPLAY_NAME_MAPPINGS["RVCEngineNode"] = "⚙ RVC Engine"
 
 if RVC_PITCH_OPTIONS_AVAILABLE:
     NODE_CLASS_MAPPINGS["RVCPitchOptionsNode"] = RVCPitchOptionsNode
@@ -827,7 +827,7 @@ if RVC_DATASET_PREP_AVAILABLE:
 
 if RVC_TRAINING_CONFIG_AVAILABLE:
     NODE_CLASS_MAPPINGS["RVCTrainingConfigNode"] = RVCTrainingConfigNode
-    NODE_DISPLAY_NAME_MAPPINGS["RVCTrainingConfigNode"] = "🎛️ RVC Training Config"
+    NODE_DISPLAY_NAME_MAPPINGS["RVCTrainingConfigNode"] = "🎛 RVC Training Config"
 
 if MOSS_DATASET_PREP_AVAILABLE:
     NODE_CLASS_MAPPINGS["MossDatasetPrepNode"] = MossDatasetPrepNode
@@ -835,11 +835,11 @@ if MOSS_DATASET_PREP_AVAILABLE:
 
 if MOSS_TRAINING_CONFIG_AVAILABLE:
     NODE_CLASS_MAPPINGS["MossTrainingConfigNode"] = MossTrainingConfigNode
-    NODE_DISPLAY_NAME_MAPPINGS["MossTrainingConfigNode"] = "🎛️ MOSS Training Config"
+    NODE_DISPLAY_NAME_MAPPINGS["MossTrainingConfigNode"] = "🎛 MOSS Training Config"
 
 if MOSS_CLIP_STAGING_AVAILABLE:
     NODE_CLASS_MAPPINGS["MossClipStagingNode"] = MossClipStagingNode
-    NODE_DISPLAY_NAME_MAPPINGS["MossClipStagingNode"] = "🎞️ MOSS Clip Staging"
+    NODE_DISPLAY_NAME_MAPPINGS["MossClipStagingNode"] = "🎞 MOSS Clip Staging"
 
 if MOSS_DATASET_ROWS_AVAILABLE:
     NODE_CLASS_MAPPINGS["MossDatasetRowsNode"] = MossDatasetRowsNode
@@ -856,16 +856,16 @@ if ASR_PUNCTUATION_TRUECASE_AVAILABLE:
 
 if STRING_MULTILINE_TAG_EDITOR_AVAILABLE:
     NODE_CLASS_MAPPINGS["StringMultilineTagEditor"] = StringMultilineTagEditor
-    NODE_DISPLAY_NAME_MAPPINGS["StringMultilineTagEditor"] = "🏷️ Multiline TTS Tag Editor"
+    NODE_DISPLAY_NAME_MAPPINGS["StringMultilineTagEditor"] = "🏷 Multiline TTS Tag Editor"
 
 if REFRESH_VOICE_CACHE_AVAILABLE:
     NODE_CLASS_MAPPINGS["RefreshVoiceCacheNode"] = RefreshVoiceCacheNode
-    NODE_DISPLAY_NAME_MAPPINGS["RefreshVoiceCacheNode"] = "♻️ Refresh Voice Cache"
+    NODE_DISPLAY_NAME_MAPPINGS["RefreshVoiceCacheNode"] = "♻ Refresh Voice Cache"
 
 # Register video analysis nodes
 if MOUTH_MOVEMENT_AVAILABLE:
     NODE_CLASS_MAPPINGS["MouthMovementAnalyzer"] = MouthMovementAnalyzerNode
-    NODE_DISPLAY_NAME_MAPPINGS["MouthMovementAnalyzer"] = "🗣️ Silent Speech Analyzer"
+    NODE_DISPLAY_NAME_MAPPINGS["MouthMovementAnalyzer"] = "🗣 Silent Speech Analyzer"
 
 if VISEME_OPTIONS_AVAILABLE:
     NODE_CLASS_MAPPINGS["VisemeDetectionOptionsNode"] = VisemeDetectionOptionsNode
@@ -873,14 +873,14 @@ if VISEME_OPTIONS_AVAILABLE:
 
 # Print startup banner
 print(SEPARATOR)
-print(f"🚀 TTS Audio Suite {VERSION_DISPLAY}")
+print(f"[TTS] TTS Audio Suite {VERSION_DISPLAY}")
 print("Universal multi-engine TTS extension for ComfyUI")
 
 # Show Python 3.13 compatibility status
 if sys.version_info >= (3, 13):
-    print(f"🐍 Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro} detected")
+    print(f"[PY] Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro} detected")
     # 🔬 NUMBA WORKAROUND: Commented out - testing if still needed with numba 0.61.2+ and librosa 0.11.0+
-    # print("⚡ Numba JIT disabled for librosa compatibility")
+    # print(" Numba JIT disabled for librosa compatibility")
 
 # Removed legacy ChatterBox model discovery to improve startup performance
 # Model discovery now happens lazily when needed by individual engines
@@ -898,12 +898,12 @@ startup_warnings = []
 
 # Check PortAudio availability for voice recording
 if VOICE_CAPTURE_AVAILABLE and hasattr(audio_recorder_module, 'SOUNDDEVICE_AVAILABLE') and not audio_recorder_module.SOUNDDEVICE_AVAILABLE:
-    startup_warnings.append("⚠️ PortAudio library not found - Voice recording disabled")
+    startup_warnings.append("[WARN] PortAudio library not found - Voice recording disabled")
     startup_warnings.append("   Install with: sudo apt-get install portaudio19-dev (Linux) or brew install portaudio (macOS)")
 
 # Only show startup dependencies if there are warnings
 if startup_warnings:
-    print("📋 System Dependencies:")
+    print("[INFO]  System Dependencies:")
     for warning in startup_warnings:
         print(f"   {warning}")
 
@@ -916,13 +916,13 @@ if DEPENDENCY_CHECKER_AVAILABLE and AsyncDependencyChecker:
     except Exception:
         pass  # Silently fail - background check is optional
 
-print(f"✅ TTS Audio Suite {VERSION_DISPLAY} loaded with {len(NODE_DISPLAY_NAME_MAPPINGS)} nodes:")
+print(f"[OK] TTS Audio Suite {VERSION_DISPLAY} loaded with {len(NODE_DISPLAY_NAME_MAPPINGS)} nodes:")
 # Group engines first, then everything else
 nodes = sorted(NODE_DISPLAY_NAME_MAPPINGS.values())
-engines = [n for n in nodes if "⚙️" in n]
-others = [n for n in nodes if "⚙️" not in n]
+engines = [n for n in nodes if "⚙" in n]
+others = [n for n in nodes if "⚙" not in n]
 for node in engines + others:
-    print(f"   • {node}")
+    print(f"   *  {node}")
 print(SEPARATOR)
 
 # Trigger voice discovery initialization in background thread after ComfyUI startup
