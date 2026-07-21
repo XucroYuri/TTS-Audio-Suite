@@ -70,18 +70,16 @@ class GPTSovitsProcessor:
             ref_audio_path = narrator_voice.get("audio", "")
             ref_text = narrator_voice.get("text", "")
 
-        # Fallback to logs/ directory auto-discovery
+        # Fallback to logs/ directory auto-discovery (from gpt_sovits_home or ComfyUI models)
         if not ref_audio_path:
+            logs_dir = engine_config.get("logs_dir", "")
             exp_name = engine_config.get("exp_name", "")
-            if exp_name:
-                logs_dir = os.path.join(
-                    os.path.dirname(engine_config.get("gpt_weight", "")),
-                    "..", "..", "logs"
-                )
+            if logs_dir and exp_name and os.path.isdir(logs_dir):
                 refs = scan_reference_audio(logs_dir, exp_name)
                 if refs:
                     ref_audio_path = refs[0]["audio"]
                     ref_text = refs[0].get("text", "")
+                    print(f"   📁 Auto-discovered ref audio: {os.path.basename(ref_audio_path)}")
 
         # Process character tags to build character profiles for adapter
         if character_parser.CHARACTER_TAG_PATTERN.search(text):

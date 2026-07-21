@@ -27,7 +27,7 @@ base_spec.loader.exec_module(base_module)
 BaseTTSNode = base_module.BaseTTSNode
 
 import folder_paths
-from engines.gpt_sovits.weight_scanner import scan_weights, scan_reference_audio
+from engines.gpt_sovits.weight_scanner import resolve_paths, scan_weights, scan_reference_audio
 
 
 class AnyType(str):
@@ -106,6 +106,17 @@ class GPTSovitsEngineNode(BaseTTSNode):
                 }),
             },
             "optional": {
+                "gpt_sovits_home": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": (
+                        "Path to existing GPT-SoVITS WebUI project root.\n"
+                        "When set, reads weights/logs/pretrained models DIRECTLY\n"
+                        "from the WebUI installation — no migration needed.\n"
+                        "Example: D:\\GPT-SoVITS\\\n\n"
+                        "Leave empty to use ComfyUI models/TTS/GPT-SoVITS/"
+                    ),
+                }),
                 "device": (["auto", "cuda", "cpu"], {
                     "default": "auto",
                     "tooltip": "Device to run inference on."
@@ -132,34 +143,27 @@ class GPTSovitsEngineNode(BaseTTSNode):
     FUNCTION = "create_engine_adapter"
     CATEGORY = "TTS Audio Suite/⚙️ Engines"
 
-    @classmethod
-    def _resolve_weight_paths(cls, selection: str) -> Dict[str, str]:
-        """Resolve weight pair selection to actual file paths."""
-        base_dir = os.path.join(folder_paths.models_dir, "TTS", "GPT-SoVITS")
-        scan_result = scan_weights(base_dir) if os.path.isdir(base_dir) else {"pairs": [], "pretrained": []}
+    def _resolve_weight_paths(self, selection: str, gpt_sovits_home: str = "") -> Dict:
+        """Resolve weight pair selection to actual file paths.
 
-        # Check pretrained options
+        Uses resolve_paths() to determine the correct source:
+        - gpt_sovits_home set → reads from WebUI project root
+        - default → ComfyUI models/TTS/GPT-SoVITS/
+        """
+        comfyui_models = folder_paths.models_dir
+        paths = resolve_paths(
+            gpt_sovits_home=gpt_sovits_home.strip() or None,
+            comfyui_models_dir=comfyui_models,
+        )
+        scan_result = scan_weights(paths.get("base_dir", ""), paths.get("pretrained_dir"))
+
         for pret in scan_result.get("pretrained", []):
-            label = f"[Pretrained] {pret['label']}"
-            if selection == label:
-                return {
-                    "gpt_path": pret["gpt_path"],
-                    "sovits_path": pret["sovits_path"],
-                    "version": pret["version"],
-                    "is_pretrained": True,
-                }
+            if selection == f"[Pretrained] {pret['label']}":
+                return {**pret, **paths}
 
-        # Check user-trained pairs
         for pair in scan_result.get("pairs", []):
-            label = f"[{pair['version']}] {pair['exp_name']}"
-            if selection == label:
-                return {
-                    "gpt_path": pair["gpt_path"],
-                    "sovits_path": pair["sovits_path"],
-                    "version": pair["version"],
-                    "exp_name": pair["exp_name"],
-                    "is_pretrained": False,
-                }
+            if selection == f"[{pair['version']}] {pair['exp_name']}":
+                return {**pair, **paths}
 
         return None
 
@@ -173,46 +177,50 @@ class GPTSovitsEngineNode(BaseTTSNode):
         top_k: int = 15,
         top_p: float = 1.0,
         temperature: float = 1.0,
+        gpt_sovits_home: str = "",
         device: str = "auto",
         use_fp16: bool = True,
         ref_audio_override: str = "",
         ref_text_override: str = "",
     ):
-        """Create GPT-SoVITS engine adapter with configuration."""
+        """Create GPT-SoVITS engine adapter with configuration.
+
+        When gpt_sovits_home is set, ALL paths (weights, BERT, CNHubert,
+        pretrained models) are resolved from the existing WebUI project root.
+        No data migration needed.
+        """
         try:
-            # Resolve weights
-            resolved = self._resolve_weight_paths(weight_pair)
+            resolved = self._resolve_weight_paths(weight_pair, gpt_sovits_home)
             if resolved is None:
                 raise ValueError(f"Could not resolve weight pair: {weight_pair}")
 
-            # Resolve device
             if device == "auto":
-                device = "cuda" if __import__("torch").cuda.is_available() else "cpu"
+                import torch
+                device = "cuda" if torch.cuda.is_available() else "cpu"
 
-            # BERT and CNHubert paths
-            base_dir = os.path.join(folder_paths.models_dir, "TTS", "GPT-SoVITS")
-            bert_path = os.path.join(base_dir, "pretrained_models", "chinese-roberta-wwm-ext-large")
-            cnhubert_path = os.path.join(base_dir, "pretrained_models", "chinese-hubert-base")
-
-            # Validate
-            for path, name in [
-                (resolved["gpt_path"], "GPT weight"),
-                (resolved["sovits_path"], "SoVITS weight"),
-                (bert_path, "BERT model"),
-                (cnhubert_path, "CNHubert model"),
+            # Validate paths
+            for key, label in [
+                ("gpt_path", "GPT weight"),
+                ("sovits_path", "SoVITS weight"),
+                ("bert_path", "BERT model"),
+                ("cnhubert_path", "CNHubert model"),
             ]:
-                if not os.path.exists(path):
-                    print(f"⚠️ {name} not found: {path}")
+                p = resolved.get(key, "")
+                if p and not os.path.exists(p):
+                    print(f"⚠️ {label} not found: {p}")
 
             config = {
                 "engine_type": "gpt_sovits",
-                "gpt_weight": resolved["gpt_path"],
-                "sovits_weight": resolved["sovits_path"],
+                "gpt_weight": resolved.get("gpt_path", ""),
+                "sovits_weight": resolved.get("sovits_path", ""),
                 "version": resolved.get("version", "v2"),
                 "exp_name": resolved.get("exp_name", ""),
                 "is_pretrained": resolved.get("is_pretrained", False),
-                "bert_path": bert_path,
-                "cnhubert_path": cnhubert_path,
+                "bert_path": resolved.get("bert_path", ""),
+                "cnhubert_path": resolved.get("cnhubert_path", ""),
+                "logs_dir": resolved.get("logs_dir", ""),
+                "gpt_sovits_home": gpt_sovits_home.strip(),
+                "source": resolved.get("source", "comfyui"),
                 "device": device,
                 "use_fp16": use_fp16,
                 "text_language": text_language,
@@ -222,21 +230,19 @@ class GPTSovitsEngineNode(BaseTTSNode):
                 "top_k": top_k,
                 "top_p": top_p,
                 "temperature": temperature,
-                "ref_audio_override": ref_audio_override,
-                "ref_text_override": ref_text_override,
+                "ref_audio_override": ref_audio_override.strip(),
+                "ref_text_override": ref_text_override.strip(),
             }
 
-            print(f"⚙️ GPT-SoVITS: Configured on {device}")
-            print(f"   GPT: {os.path.basename(resolved['gpt_path'])}")
-            print(f"   SoVITS: {os.path.basename(resolved['sovits_path'])}")
-            print(f"   Version: {resolved.get('version', 'v2')}")
+            print(f"⚙️ GPT-SoVITS: source={resolved.get('source', '?')}, device={device}")
+            print(f"   GPT: {os.path.basename(resolved.get('gpt_path', '?'))}")
+            print(f"   SoVITS: {os.path.basename(resolved.get('sovits_path', '?'))}")
 
             engine_data = {
                 "engine_type": "gpt_sovits",
                 "config": config,
                 "adapter_class": "GPTSovitsAdapter",
             }
-
             return (engine_data,)
 
         except Exception as e:
@@ -244,14 +250,11 @@ class GPTSovitsEngineNode(BaseTTSNode):
             import traceback
             traceback.print_exc()
 
-            error_config = {
+            return ({
                 "engine_type": "gpt_sovits",
-                "config": {
-                    "error": str(e),
-                },
+                "config": {"error": str(e)},
                 "adapter_class": "GPTSovitsAdapter",
-            }
-            return (error_config,)
+            },)
 
 
 # Register
