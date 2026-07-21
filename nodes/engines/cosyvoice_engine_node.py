@@ -89,6 +89,18 @@ class CosyVoiceEngineNode(BaseTTSNode):
                 }),
             },
             "optional": {
+                "cosyvoice_home": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": (
+                        "Path to local CosyVoice project root directory.\n"
+                        "When set, scans {home}/pretrained_models/ for model files\n"
+                        "so you don't need to re-download models already present\n"
+                        "in a local CosyVoice installation.\n"
+                        "Example: D:\\CosyVoice\\\n\n"
+                        "Leave empty to use ComfyUI models/TTS/CosyVoice/"
+                    ),
+                }),
                 # Optional instruction text (like Higgs Audio's system_prompt)
                 "instruct_text": ("STRING", {
                     "multiline": True,
@@ -127,12 +139,36 @@ For best voice cloning quality: Leave this empty and provide .txt transcripts vi
     CATEGORY = "TTS Audio Suite/⚙️ Engines"
     
     @classmethod
-    def _get_model_paths(cls) -> List[str]:
-        """Get available CosyVoice3 model paths."""
+    def _get_model_paths(cls, cosyvoice_home: str = "") -> List[str]:
+        """Get available CosyVoice3 model paths.
+
+        Scans in priority order:
+        1. cosyvoice_home/pretrained_models/ (when home is set)
+        2. ComfyUI models/TTS/ directories
+        """
         paths = [
             "Fun-CosyVoice3-0.5B-RL",  # RL-enhanced (default, better quality)
             "Fun-CosyVoice3-0.5B"      # Standard
         ]
+
+        # Scan cosyvoice_home if set
+        home = cosyvoice_home.strip() if cosyvoice_home else ""
+        if home and os.path.isdir(home):
+            # Official CosyVoice project: models are in pretrained_models/
+            pretrained = os.path.join(home, "pretrained_models")
+            for scan_dir in [home, pretrained]:
+                if not os.path.isdir(scan_dir):
+                    continue
+                for entry in os.listdir(scan_dir):
+                    entry_path = os.path.join(scan_dir, entry)
+                    if not os.path.isdir(entry_path):
+                        continue
+                    # Check for CosyVoice model marker
+                    marker = os.path.join(entry_path, "cosyvoice3.yaml")
+                    if os.path.isfile(marker):
+                        label = f"local:{entry} (from home)"
+                        if label not in paths:
+                            paths.insert(0, label)
 
         try:
             # Check all configured TTS model paths
@@ -142,7 +178,6 @@ For best voice cloning quality: Leave this empty and provide .txt transcripts vi
                 # Check direct path (models/TTS/Fun-CosyVoice3-0.5B - shared folder)
                 cosy_direct = os.path.join(base_path, "Fun-CosyVoice3-0.5B")
                 if os.path.exists(os.path.join(cosy_direct, "cosyvoice3.yaml")):
-                    # Both variants use the same folder - just mark as local
                     if "local:Fun-CosyVoice3-0.5B-RL" not in paths:
                         paths.insert(0, "local:Fun-CosyVoice3-0.5B-RL")
                     if "local:Fun-CosyVoice3-0.5B" not in paths:
@@ -173,11 +208,15 @@ For best voice cloning quality: Leave this empty and provide .txt transcripts vi
         speed: float,
         use_fp16: bool,
         instruct_text: str = "",
+        cosyvoice_home: str = "",
         load_trt: bool = False,
         load_vllm: bool = False,
     ):
         """
         Create CosyVoice3 engine adapter with configuration.
+
+        When cosyvoice_home is set and model_path starts with "local:",
+        the actual model directory is resolved from the home path.
 
         Mode is auto-detected in adapter:
         - If instruct_text provided → instruct mode
@@ -188,13 +227,27 @@ For best voice cloning quality: Leave this empty and provide .txt transcripts vi
             Tuple containing CosyVoice3 engine configuration data
         """
         try:
+            # Resolve model_path from cosyvoice_home if applicable
+            resolved_path = model_path
+            home = cosyvoice_home.strip() if cosyvoice_home else ""
+            if home and model_path.startswith("local:"):
+                model_name = model_path.replace("local:", "").replace(" (from home)", "").strip()
+                # Try pretrained_models/ subdirectory first (official CosyVoice convention)
+                for subdir in ["pretrained_models", ""]:
+                    candidate = os.path.join(home, subdir, model_name)
+                    if os.path.isdir(candidate) and os.path.isfile(os.path.join(candidate, "cosyvoice3.yaml")):
+                        resolved_path = candidate
+                        print(f"   Resolved from cosyvoice_home: {resolved_path}")
+                        break
+
             # Create configuration dictionary
             config = {
-                "model_path": model_path,
+                "model_path": resolved_path,
                 "device": device,
                 "speed": speed,
                 "use_fp16": use_fp16,
                 "instruct_text": instruct_text.strip() if instruct_text else "",
+                "cosyvoice_home": home,
                 "load_trt": load_trt,
                 "load_vllm": load_vllm,
                 "engine_type": "cosyvoice",
@@ -202,6 +255,8 @@ For best voice cloning quality: Leave this empty and provide .txt transcripts vi
 
             print(f"⚙️ CosyVoice3: Configured on {device}")
             print(f"   Model: {model_path}")
+            if home:
+                print(f"   Home: {home}")
             print(f"   Speed: {speed}x")
             if instruct_text:
                 print(f"   Instruction: {instruct_text[:50]}...")

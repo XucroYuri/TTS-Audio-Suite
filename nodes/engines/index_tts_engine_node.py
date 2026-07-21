@@ -145,6 +145,18 @@ class IndexTTSEngineNode(BaseTTSNode):
                 }),
             },
             "optional": {
+                "index_tts_home": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": (
+                        "Path to local IndexTTS project root directory.\n"
+                        "When set, scans {home}/checkpoints/ and {home}/models/\n"
+                        "for model files, so you don't need to re-download models\n"
+                        "already present in a local IndexTTS installation.\n"
+                        "Example: D:\\index-tts\\\n\n"
+                        "Leave empty to use ComfyUI models/TTS/IndexTTS/"
+                    ),
+                }),
                 # Unified Emotion Control - Using multitype input for better connection suggestions
                 "emotion_control": (any_typ, {
                     "tooltip": """Vector/text emotion control (legacy unified input):
@@ -195,9 +207,39 @@ This can be connected together with the vector/text emotion input above; IndexTT
     CATEGORY = "TTS Audio Suite/⚙️ Engines"
     
     @classmethod
-    def _get_model_paths(cls) -> List[str]:
-        """Get available IndexTTS-2 model paths following F5TTS pattern."""
+    def _get_model_paths(cls, index_tts_home: str = "") -> List[str]:
+        """Get available IndexTTS-2 model paths.
+
+        Scans in priority order:
+        1. index_tts_home/checkpoints/ and {home}/models/ (when home is set)
+        2. ComfyUI models/TTS/ directories
+        3. Default auto-download option
+        """
         paths = ["IndexTTS-2"]  # Auto-download option (just model name)
+
+        # Scan index_tts_home if set
+        home = index_tts_home.strip() if index_tts_home else ""
+        if home and os.path.isdir(home):
+            # Official IndexTTS project: models may be in checkpoints/ or models/
+            for subdir in ["checkpoints", "models", ""]:
+                scan_dir = os.path.join(home, subdir) if subdir else home
+                if not os.path.isdir(scan_dir):
+                    continue
+                # If the directory itself contains a model marker (config.yaml, gpt.pth)
+                if os.path.isfile(os.path.join(scan_dir, "config.yaml")):
+                    label = f"local:IndexTTS-2 (from home)"
+                    if label not in paths:
+                        paths.insert(0, label)
+                    break
+                # Otherwise scan subdirectories
+                for entry in os.listdir(scan_dir):
+                    entry_path = os.path.join(scan_dir, entry)
+                    if not os.path.isdir(entry_path):
+                        continue
+                    if os.path.isfile(os.path.join(entry_path, "config.yaml")):
+                        label = f"local:{entry} (from home)"
+                        if label not in paths:
+                            paths.insert(0, label)
 
         try:
             # Check all configured TTS model paths
@@ -251,6 +293,7 @@ This can be connected together with the vector/text emotion input above; IndexTT
         max_mel_tokens: int,
         use_fp16: bool,
         use_deepspeed: bool,
+        index_tts_home: str = "",
         use_cuda_kernel: str = "auto",
         emotion_control = None,
         use_torch_compile: bool = False,
@@ -333,9 +376,22 @@ This can be connected together with the vector/text emotion input above; IndexTT
             low_vram = _coerce_bool_flag(low_vram)
 
             # Create configuration dictionary
+            # Resolve model_path from index_tts_home if applicable
+            resolved_path = model_path
+            home = index_tts_home.strip() if index_tts_home else ""
+            if home and model_path.startswith("local:"):
+                model_name = model_path.replace("local:", "").replace(" (from home)", "").strip()
+                for subdir in ["checkpoints", "models", ""]:
+                    candidate = os.path.join(home, subdir, model_name) if subdir else os.path.join(home, model_name)
+                    if os.path.isdir(candidate) and os.path.isfile(os.path.join(candidate, "config.yaml")):
+                        resolved_path = candidate
+                        print(f"   Resolved from index_tts_home: {resolved_path}")
+                        break
+
             config = {
-                "model_path": model_path,
+                "model_path": resolved_path,
                 "device": device,
+                "index_tts_home": home,
                 "emotion_audio": emotion_audio,  # Dedicated audio emotion input
                 "emotion_alpha": emotion_alpha,
                 "use_emotion_text": use_emotion_text,
