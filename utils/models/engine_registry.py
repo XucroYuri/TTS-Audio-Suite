@@ -182,6 +182,13 @@ ENGINE_REGISTRY: Dict[str, EngineCapabilities] = {
         default_runtime_profile="vibevoice_transformers4_shared",
     ),
 
+    "gpt_sovits": EngineCapabilities(
+        supports_voice_conversion=False,
+        multilingual_model_switching=False,  # Single model pair per character
+        can_corrupt_on_reload=False,
+        fallback_languages=["zh", "en", "ja"],
+    ),
+
     "step_audio_editx": EngineCapabilities(
         supports_voice_conversion=False,
         multilingual_model_switching=False,

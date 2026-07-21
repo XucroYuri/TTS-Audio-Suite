@@ -89,10 +89,21 @@ __all__ = [
     'ChatterBoxEngineAdapter', 'F5TTSEngineAdapter', 'CosyVoiceAdapter', 'EchoTTSEngineAdapter',
     'DotsTTSEngineAdapter', 'OmniVoiceEngineAdapter',
     'MossTTSEngineAdapter', 'HiggsAudioV3EngineAdapter',
+    'GPTSovitsAdapter',
     'CHATTERBOX_ADAPTER_AVAILABLE', 'F5TTS_ADAPTER_AVAILABLE', 'COSYVOICE_ADAPTER_AVAILABLE',
     'ECHO_TTS_ADAPTER_AVAILABLE', 'DOTS_TTS_ADAPTER_AVAILABLE', 'OMNIVOICE_ADAPTER_AVAILABLE',
     'MOSS_TTS_ADAPTER_AVAILABLE', 'HIGGS_AUDIO_V3_ADAPTER_AVAILABLE',
+    'GPT_SOVITS_ADAPTER_AVAILABLE',
     'MossSoundEffectV2Adapter'
 ]
 
 from .moss_soundeffect_v2_adapter import MossSoundEffectV2Adapter
+
+try:
+    from .gpt_sovits_adapter import GPTSovitsAdapter
+    GPT_SOVITS_ADAPTER_AVAILABLE = True
+except Exception as e:
+    GPT_SOVITS_ADAPTER_AVAILABLE = False
+    class GPTSovitsAdapter:
+        def __init__(self, *args, **kwargs):
+            raise ImportError(f"GPT-SoVITS adapter not available: {e}")

@@ -1469,6 +1469,28 @@ def register_cosyvoice_factory():
     unified_model_interface.register_model_factory("cosyvoice", "tts", cosyvoice_factory)
 
 
+def register_gpt_sovits_factory():
+    """Register GPT-SoVITS adapter factory."""
+    from engines.adapters.gpt_sovits_adapter import GPTSovitsAdapter
+
+    def gpt_sovits_factory(config: ModelLoadConfig):
+        """Factory for GPT-SoVITS adapter with dual-model loading."""
+        adapter = GPTSovitsAdapter()
+        params = config.additional_params or {}
+
+        adapter.initialize_engine(
+            gpt_weight=params.get("gpt_weight", ""),
+            sovits_weight=params.get("sovits_weight", ""),
+            bert_path=params.get("bert_path", ""),
+            cnhubert_path=params.get("cnhubert_path", ""),
+            device=config.device or "cuda",
+            use_fp16=params.get("use_fp16", True),
+        )
+        return adapter
+
+    unified_model_interface.register_model_factory("gpt_sovits", "tts", gpt_sovits_factory)
+
+
 def register_moss_tts_factory():
     """Register MOSS-TTS model factory."""
     def moss_tts_factory(config: ModelLoadConfig):
@@ -1980,6 +2002,7 @@ def initialize_all_factories():
     register_vibevoice_factory()
     register_index_tts_factory()
     register_cosyvoice_factory()
+    register_gpt_sovits_factory()
     register_moss_tts_factory()
     register_moss_soundeffect_v2_factory()
     register_qwen3_tts_factory()

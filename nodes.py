@@ -227,6 +227,14 @@ except Exception as e:
     print(f"❌ CosyVoice3 Engine failed: {e}")
     COSYVOICE_ENGINE_AVAILABLE = False
 
+try:
+    gpt_sovits_engine_module = load_node_module("gpt_sovits_engine_node", "engines/gpt_sovits_engine_node.py")
+    GPTSovitsEngineNode = gpt_sovits_engine_module.GPTSovitsEngineNode
+    GPT_SOVITS_ENGINE_AVAILABLE = True
+except Exception as e:
+    print(f"❌ GPT-SoVITS Engine failed: {e}")
+    GPT_SOVITS_ENGINE_AVAILABLE = False
+
 # IndexTTS-2 Emotion Options Node
 try:
     index_tts_emotion_options_module = load_node_module("index_tts_emotion_options_node", "engines/index_tts_emotion_options_node.py")
@@ -685,6 +693,10 @@ if INDEX_TTS_ENGINE_AVAILABLE:
 if COSYVOICE_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["CosyVoiceEngineNode"] = CosyVoiceEngineNode
     NODE_DISPLAY_NAME_MAPPINGS["CosyVoiceEngineNode"] = "⚙️ CosyVoice3 Engine"
+
+if GPT_SOVITS_ENGINE_AVAILABLE:
+    NODE_CLASS_MAPPINGS["GPTSovitsEngineNode"] = GPTSovitsEngineNode
+    NODE_DISPLAY_NAME_MAPPINGS["GPTSovitsEngineNode"] = "⚙️ GPT-SoVITS Engine"
 
 if INDEX_TTS_EMOTION_OPTIONS_AVAILABLE:
     NODE_CLASS_MAPPINGS["IndexTTSEmotionOptionsNode"] = IndexTTSEmotionOptionsNode
