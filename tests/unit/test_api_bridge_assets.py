@@ -244,6 +244,33 @@ def test_rebuild_conflicting_uuid_files_are_counted_rejected_and_deleted_togethe
     assert store._total_bytes == 0
 
 
+def test_conflict_delete_keeps_retryable_state_when_a_later_unlink_fails(tmp_path: Path, monkeypatch):
+    asset_id = "c" * 32
+    flac = tmp_path / f"{asset_id}.flac"
+    wav = tmp_path / f"{asset_id}.wav"
+    flac.write_bytes(wav_bytes())
+    wav.write_bytes(wav_bytes())
+    store = AudioAssetStore(tmp_path)
+    original_unlink = Path.unlink
+    failed = False
+
+    def fail_second(self, *args, **kwargs):
+        nonlocal failed
+        if self == wav and not failed:
+            failed = True
+            raise PermissionError("locked")
+        return original_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_second)
+    with pytest.raises(PermissionError):
+        store.delete(asset_id)
+    assert store._managed_paths[asset_id] == (wav.resolve(),)
+    assert store._total_bytes == wav.stat().st_size
+    assert store._file_count == 1
+    store.delete(asset_id)
+    assert store._total_bytes == 0 and store._file_count == 0
+
+
 @pytest.mark.unit
 def test_asset_store_rejects_missing_and_replaced_content_before_a_node_can_load_it(tmp_path: Path, monkeypatch):
     store = AudioAssetStore(tmp_path)

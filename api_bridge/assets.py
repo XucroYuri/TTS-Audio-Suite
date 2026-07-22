@@ -149,16 +149,21 @@ class AudioAssetStore:
                 raise ValueError(f"unknown asset_id: {asset_id}")
             if self._pins.get(asset_id, 0):
                 raise AssetInUseError("asset_in_use")
-            paths = self._managed_paths[asset_id]
-            for path in paths:
+            remaining = list(self._managed_paths[asset_id])
+            while remaining:
+                path = remaining[0]
                 registered = self._registered_path(AudioAsset(asset_id, path, "", self._managed_sizes[path]))
                 if registered.exists():
                     registered.unlink()
                 self._total_bytes -= self._managed_sizes.pop(path)
                 self._file_count -= 1
-            del self._assets[asset_id]
-            del self._managed_paths[asset_id]
-            self._conflicts.discard(asset_id)
+                remaining.pop(0)
+                if remaining:
+                    self._managed_paths[asset_id] = tuple(remaining)
+                else:
+                    del self._assets[asset_id]
+                    del self._managed_paths[asset_id]
+                    self._conflicts.discard(asset_id)
 
     def _rebuild_index(self) -> None:
         with self._lock:
