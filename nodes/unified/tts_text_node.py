@@ -247,6 +247,14 @@ Back to the main narrator voice for the conclusion.""",
             if engine_type == "index_tts":
                 stable_params['low_vram'] = config.get('low_vram', False)
 
+            if engine_type == "gpt_sovits":
+                stable_params['gpt_weight'] = config.get('gpt_weight')
+                stable_params['sovits_weight'] = config.get('sovits_weight')
+                stable_params['bert_path'] = config.get('bert_path')
+                stable_params['cnhubert_path'] = config.get('cnhubert_path')
+                stable_params['gpt_sovits_home'] = config.get('gpt_sovits_home')
+                stable_params['use_fp16'] = config.get('use_fp16', True)
+
             # For CosyVoice, include actual model identity and load options in cache key.
             # Both 0.5B variants share the same folder, so using only the resolved path or
             # generic "model" field is insufficient. Switching base <-> RL must force a
@@ -497,6 +505,17 @@ Back to the main narrator voice for the conclusion.""",
                 }
                 return engine_instance
                 
+            elif engine_type == "gpt_sovits":
+                from engines.processors.gpt_sovits_processor import GPTSovitsProcessor
+
+                engine_instance = GPTSovitsProcessor(config)
+                import time
+                self._cached_engine_instances[cache_key] = {
+                    'instance': engine_instance,
+                    'timestamp': time.time()
+                }
+                return engine_instance
+
             elif engine_type == "index_tts":
                 # Create IndexTTS processor instance using the adapter pattern
                 from engines.processors.index_tts_processor import IndexTTSProcessor
@@ -859,6 +878,14 @@ Back to the main narrator voice for the conclusion.""",
                     print(f"🎤 TTS Text: Using voice reference from Character Voices node ({character_name})")
                     # print(f"🐛 TTS_TEXT: Character Voices - character_name='{character_name}', has_audio={audio is not None}")
                     return audio_path, audio, reference_text, character_name
+
+                elif isinstance(opt_narrator, dict) and opt_narrator.get("audio_path"):
+                    return (
+                        opt_narrator["audio_path"],
+                        opt_narrator.get("audio"),
+                        opt_narrator.get("reference_text", ""),
+                        opt_narrator.get("character_name", "narrator"),
+                    )
                 
                 # Check if it's a direct audio input (dict with waveform and sample_rate)
                 elif isinstance(opt_narrator, dict) and "waveform" in opt_narrator:
@@ -1350,6 +1377,26 @@ Back to the main narrator voice for the conclusion.""",
                     silence_between_chunks_ms=silence_between_chunks_ms
                 )
                 
+            elif engine_type == "gpt_sovits":
+                reference_path = audio_path or config.get("ref_audio_override", "")
+                reference_prompt = reference_text or config.get("ref_text_override", "")
+                if not reference_path:
+                    raise ValueError(
+                        "GPT-SoVITS requires a reference audio file path. "
+                        "Use Character Voices or narrator_voice; raw waveform inputs cannot be used directly."
+                    )
+                audio_result, generation_info = engine_instance.process_text(
+                    text=text,
+                    speaker_audio={"audio_path": reference_path},
+                    reference_text=reference_prompt,
+                    seed=seed,
+                    return_info=True,
+                )
+                formatted_audio = AudioProcessingUtils.format_for_comfyui(
+                    audio_result, getattr(engine_instance, "sample_rate", 32000)
+                )
+                result = (formatted_audio, generation_info)
+
             elif engine_type == "index_tts":
                 # IndexTTS-2 uses processor pattern - call through processor with emotion support
                 audio_result, chunk_info = engine_instance.process_text(
