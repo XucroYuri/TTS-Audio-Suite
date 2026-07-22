@@ -9,7 +9,9 @@ import tempfile
 import os
 import hashlib
 import gc
+import uuid
 from typing import Dict, Any, Optional, List, Tuple
+from contextlib import nullcontext
 
 # Use direct file imports that work when loaded via importlib
 import os
@@ -159,9 +161,18 @@ Hello! This is unified SRT TTS with character switching.
         super().__init__()
         # Cache engine instances to prevent model reloading
         self._cached_engine_instances = {}
+        self._runtime_owner_token = uuid.uuid4().hex
 
     def _runtime_key(self, cache_key: str) -> str:
-        return make_runtime_key(self._RUNTIME_OWNER, cache_key)
+        return make_runtime_key(self._RUNTIME_OWNER, self._runtime_owner_token, cache_key)
+
+    def _target_runtime_lease(self, engine_type: str, engine_instance: Any):
+        if engine_type not in self._TARGET_RUNTIME_ENGINES:
+            return nullcontext()
+        runtime_key = getattr(engine_instance, "_api_bridge_runtime_key", None)
+        if not runtime_key:
+            raise RuntimeError(f"TTS runtime is not registered for {engine_type}")
+        return get_runtime_registry().lease(runtime_key)
 
     def _register_target_runtime(
         self,
@@ -180,6 +191,9 @@ Hello! This is unified SRT TTS with character switching.
         if not callable(unload):
             return
 
+        runtime_key = self._runtime_key(cache_key)
+        setattr(engine_instance, "_api_bridge_runtime_key", runtime_key)
+
         def release_instance() -> None:
             try:
                 unload()
@@ -195,7 +209,7 @@ Hello! This is unified SRT TTS with character switching.
 
         get_runtime_registry().register(
             RuntimeHandle.create(
-                self._runtime_key(cache_key),
+                runtime_key,
                 engine_type,
                 str(config.get("resource_id") or ""),
                 str(resolved_device),
@@ -203,9 +217,10 @@ Hello! This is unified SRT TTS with character switching.
             )
         )
 
-    def _release_target_runtime(self, cache_key: str, engine_type: str) -> None:
+    def _release_target_runtime(self, cache_key: str, engine_type: str) -> dict[str, list[object]]:
         if engine_type in self._TARGET_RUNTIME_ENGINES:
-            get_runtime_registry().release(runtime_key=self._runtime_key(cache_key))
+            return get_runtime_registry().release(runtime_key=self._runtime_key(cache_key))
+        return {"released": [], "busy": [], "errors": []}
 
     def _create_proper_engine_node_instance(self, engine_data: Dict[str, Any]):
         """
@@ -324,6 +339,7 @@ Hello! This is unified SRT TTS with character switching.
             # RL and base variants share one folder but use different llm files, so
             # model_path selection must invalidate the cached engine instance.
             if engine_type == "cosyvoice":
+                stable_params['resource_id'] = config.get('resource_id')
                 stable_params['model_path'] = config.get('model_path', 'Fun-CosyVoice3-0.5B-RL')
                 stable_params['use_fp16'] = config.get('use_fp16', True)
                 stable_params['load_trt'] = config.get('load_trt', False)
@@ -360,12 +376,16 @@ Hello! This is unified SRT TTS with character switching.
                     else:
                         # Cache invalidated by model unloading, remove it
                         print(f"🗑️ Removing invalidated {engine_type} SRT engine cache (models were unloaded)")
-                        self._release_target_runtime(cache_key, engine_type)
+                        release_report = self._release_target_runtime(cache_key, engine_type)
+                        if release_report["busy"]:
+                            raise RuntimeError(f"TTS runtime is busy for {engine_type}; retry cache invalidation later")
                         self._cached_engine_instances.pop(cache_key, None)
                 else:
                     # Old format (direct instance) - assume invalid and remove
                     print(f"🗑️ Removing old-format {engine_type} SRT engine cache (upgrading to timestamped format)")
-                    self._release_target_runtime(cache_key, engine_type)
+                    release_report = self._release_target_runtime(cache_key, engine_type)
+                    if release_report["busy"]:
+                        raise RuntimeError(f"TTS runtime is busy for {engine_type}; retry cache invalidation later")
                     self._cached_engine_instances.pop(cache_key, None)
             
             # print(f"🔧 Creating new {engine_type} SRT engine instance")
@@ -1357,13 +1377,14 @@ Hello! This is unified SRT TTS with character switching.
                 }
 
                 # Use the processor's main entry point with IndexTTS-2 emotion control
-                result = engine_instance.processor.process_srt_content(
-                    srt_content=srt_content,
-                    voice_mapping=voice_mapping,
-                    seed=seed,
-                    timing_mode=timing_mode,
-                    timing_params=timing_params
-                )
+                with self._target_runtime_lease(engine_type, engine_instance):
+                    result = engine_instance.processor.process_srt_content(
+                        srt_content=srt_content,
+                        voice_mapping=voice_mapping,
+                        seed=seed,
+                        timing_mode=timing_mode,
+                        timing_params=timing_params
+                    )
 
             elif engine_type == "echo_tts":
                 # Echo-TTS SRT processing via processor
@@ -1564,13 +1585,14 @@ Hello! This is unified SRT TTS with character switching.
                 }
 
                 # Use the processor's main entry point
-                result = engine_instance.processor.process_srt_content(
-                    srt_content=srt_content,
-                    voice_mapping=voice_mapping,
-                    seed=seed,
-                    timing_mode=timing_mode,
-                    timing_params=timing_params
-                )
+                with self._target_runtime_lease(engine_type, engine_instance):
+                    result = engine_instance.processor.process_srt_content(
+                        srt_content=srt_content,
+                        voice_mapping=voice_mapping,
+                        seed=seed,
+                        timing_mode=timing_mode,
+                        timing_params=timing_params
+                    )
 
             elif engine_type == "qwen3_tts":
                 # Use the Qwen3-TTS SRT processor from the wrapper instance

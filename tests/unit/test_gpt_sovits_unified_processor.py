@@ -109,16 +109,27 @@ def test_unified_node_passes_reference_path_text_and_seed_to_gpt_processor(monke
     spec.loader.exec_module(module)
 
     class FakeProcessor:
-        def __init__(self):
+        def __init__(self, config):
+            self.config = config.copy()
             self.call = None
+            self.cleanup_calls = 0
+
+        def update_config(self, config):
+            self.config = config.copy()
 
         def process_text(self, **kwargs):
             self.call = kwargs
             return torch.ones(1, 1600), "fake GPT-SoVITS info"
 
-    processor = FakeProcessor()
+        def cleanup(self):
+            self.cleanup_calls += 1
+
+    from engines.processors import gpt_sovits_processor
+
+    registry = RuntimeRegistry()
+    monkeypatch.setattr(module, "get_runtime_registry", lambda: registry)
+    monkeypatch.setattr(gpt_sovits_processor, "GPTSovitsProcessor", FakeProcessor)
     node = module.UnifiedTTSTextNode()
-    monkeypatch.setattr(node, "_create_proper_engine_node_instance", lambda _: processor)
     monkeypatch.setattr(
         node,
         "_get_voice_reference",
@@ -133,6 +144,7 @@ def test_unified_node_passes_reference_path_text_and_seed_to_gpt_processor(monke
     )
 
     assert "fake GPT-SoVITS info" in info
+    processor = next(iter(node._cached_engine_instances.values()))["instance"]
     assert processor.call == {
         "text": "测试文本",
         "speaker_audio": {"audio_path": "reference.wav"},
@@ -191,7 +203,8 @@ def test_text_target_cache_registers_touches_and_releases_exact_gpt_runtime(monk
     second = node._create_proper_engine_node_instance(engine)
 
     assert first is second
-    assert registry.status()[0]["runtime_key"].startswith("text:gpt_sovits_")
+    assert registry.status()[0]["runtime_key"].startswith("text:")
+    assert ":gpt_sovits_" in registry.status()[0]["runtime_key"]
     assert "private" not in registry.status()[0]["runtime_key"]
     assert registry.status()[0]["last_used_at"] >= before_reuse
 

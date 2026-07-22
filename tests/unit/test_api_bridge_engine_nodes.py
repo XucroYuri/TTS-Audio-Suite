@@ -6,6 +6,7 @@ import types
 import pytest
 
 from api_bridge.models import TTSResource
+from api_bridge.runtime_registry import RuntimeRegistry
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -285,3 +286,60 @@ def test_srt_cache_recreates_index_processor_for_each_load_identity(
         _index_engine_data(changed_key, changed_value)
     )
     assert len(created) == 2
+
+
+@pytest.mark.unit
+def test_text_cache_recreates_cosyvoice_wrapper_when_resource_identity_changes(monkeypatch):
+    module = _load_unified_node("tts_text_node.py", "cosy_text_resource_cache_key_test")
+    _force_cache_valid(monkeypatch)
+    registry = RuntimeRegistry()
+    monkeypatch.setattr(module, "get_runtime_registry", lambda: registry)
+    node = module.UnifiedTTSTextNode()
+    base = {
+        "engine_type": "cosyvoice",
+        "config": {
+            "resource_id": "cosy-a",
+            "model_path": "C:/cosy/model",
+            "device": "cpu",
+            "use_fp16": False,
+        },
+    }
+    changed = {"engine_type": "cosyvoice", "config": dict(base["config"], resource_id="cosy-b")}
+
+    assert node._create_proper_engine_node_instance(base) is not node._create_proper_engine_node_instance(changed)
+
+
+@pytest.mark.unit
+def test_srt_cache_recreates_cosyvoice_wrapper_when_resource_identity_changes(monkeypatch):
+    module = _load_unified_node("tts_srt_node.py", "cosy_srt_resource_cache_key_test")
+    _force_cache_valid(monkeypatch)
+    registry = RuntimeRegistry()
+    monkeypatch.setattr(module, "get_runtime_registry", lambda: registry)
+
+    class FakeSRTProcessor:
+        def __init__(self, wrapper, config):
+            self.config = config
+
+        def update_config(self, config):
+            self.config = config
+
+        def cleanup(self):
+            pass
+
+    fake_module = types.SimpleNamespace(CosyVoiceSRTProcessor=FakeSRTProcessor)
+    fake_spec = types.SimpleNamespace(loader=types.SimpleNamespace(exec_module=lambda _: None))
+    monkeypatch.setattr(module.importlib.util, "spec_from_file_location", lambda *_: fake_spec)
+    monkeypatch.setattr(module.importlib.util, "module_from_spec", lambda _: fake_module)
+    node = module.UnifiedTTSSRTNode()
+    base = {
+        "engine_type": "cosyvoice",
+        "config": {
+            "resource_id": "cosy-a",
+            "model_path": "C:/cosy/model",
+            "device": "cpu",
+            "use_fp16": False,
+        },
+    }
+    changed = {"engine_type": "cosyvoice", "config": dict(base["config"], resource_id="cosy-b")}
+
+    assert node._create_proper_engine_node_instance(base) is not node._create_proper_engine_node_instance(changed)

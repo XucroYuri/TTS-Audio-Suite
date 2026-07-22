@@ -8,7 +8,9 @@ import numpy as np
 import os
 import hashlib
 import gc
+import uuid
 from typing import Dict, Any, Optional, List, Tuple
+from contextlib import nullcontext
 
 # Use direct file imports that work when loaded via importlib
 import os
@@ -147,9 +149,18 @@ Back to the main narrator voice for the conclusion.""",
         self._current_adapter = None
         # Cache engine instances to prevent model reloading
         self._cached_engine_instances = {}
+        self._runtime_owner_token = uuid.uuid4().hex
 
     def _runtime_key(self, cache_key: str) -> str:
-        return make_runtime_key(self._RUNTIME_OWNER, cache_key)
+        return make_runtime_key(self._RUNTIME_OWNER, self._runtime_owner_token, cache_key)
+
+    def _target_runtime_lease(self, engine_type: str, engine_instance: Any):
+        if engine_type not in self._TARGET_RUNTIME_ENGINES:
+            return nullcontext()
+        runtime_key = getattr(engine_instance, "_api_bridge_runtime_key", None)
+        if not runtime_key:
+            raise RuntimeError(f"TTS runtime is not registered for {engine_type}")
+        return get_runtime_registry().lease(runtime_key)
 
     def _register_target_runtime(
         self,
@@ -168,6 +179,9 @@ Back to the main narrator voice for the conclusion.""",
         if not callable(unload):
             return
 
+        runtime_key = self._runtime_key(cache_key)
+        setattr(engine_instance, "_api_bridge_runtime_key", runtime_key)
+
         def release_instance() -> None:
             try:
                 unload()
@@ -183,7 +197,7 @@ Back to the main narrator voice for the conclusion.""",
 
         get_runtime_registry().register(
             RuntimeHandle.create(
-                self._runtime_key(cache_key),
+                runtime_key,
                 engine_type,
                 str(config.get("resource_id") or ""),
                 str(resolved_device),
@@ -191,9 +205,10 @@ Back to the main narrator voice for the conclusion.""",
             )
         )
 
-    def _release_target_runtime(self, cache_key: str, engine_type: str) -> None:
+    def _release_target_runtime(self, cache_key: str, engine_type: str) -> dict[str, list[object]]:
         if engine_type in self._TARGET_RUNTIME_ENGINES:
-            get_runtime_registry().release(runtime_key=self._runtime_key(cache_key))
+            return get_runtime_registry().release(runtime_key=self._runtime_key(cache_key))
+        return {"released": [], "busy": [], "errors": []}
 
     def _create_proper_engine_node_instance(self, engine_data: Dict[str, Any]):
         """
@@ -331,6 +346,7 @@ Back to the main narrator voice for the conclusion.""",
             # generic "model" field is insufficient. Switching base <-> RL must force a
             # fresh processor/adapter instance or the old variant will keep being reused.
             if engine_type == "cosyvoice":
+                stable_params['resource_id'] = config.get('resource_id')
                 stable_params['model_path'] = config.get('model_path', 'Fun-CosyVoice3-0.5B-RL')
                 stable_params['use_fp16'] = config.get('use_fp16', True)
                 stable_params['load_trt'] = config.get('load_trt', False)
@@ -368,12 +384,16 @@ Back to the main narrator voice for the conclusion.""",
                     else:
                         # Cache invalidated by model unloading, remove it
                         print(f"🗑️ Removing invalidated {engine_type} engine cache (models were unloaded)")
-                        self._release_target_runtime(cache_key, engine_type)
+                        release_report = self._release_target_runtime(cache_key, engine_type)
+                        if release_report["busy"]:
+                            raise RuntimeError(f"TTS runtime is busy for {engine_type}; retry cache invalidation later")
                         self._cached_engine_instances.pop(cache_key, None)
                 else:
                     # Old format (direct instance) - assume invalid and remove
                     print(f"🗑️ Removing old-format {engine_type} engine cache (upgrading to timestamped format)")
-                    self._release_target_runtime(cache_key, engine_type)
+                    release_report = self._release_target_runtime(cache_key, engine_type)
+                    if release_report["busy"]:
+                        raise RuntimeError(f"TTS runtime is busy for {engine_type}; retry cache invalidation later")
                     self._cached_engine_instances.pop(cache_key, None)
             
             # print(f"🔧 Creating new {engine_type} engine instance")
@@ -1473,13 +1493,14 @@ Back to the main narrator voice for the conclusion.""",
                         "GPT-SoVITS requires a reference audio file path. "
                         "Use Character Voices or narrator_voice; raw waveform inputs cannot be used directly."
                     )
-                audio_result, generation_info = engine_instance.process_text(
-                    text=text,
-                    speaker_audio={"audio_path": reference_path},
-                    reference_text=reference_prompt,
-                    seed=seed,
-                    return_info=True,
-                )
+                with self._target_runtime_lease(engine_type, engine_instance):
+                    audio_result, generation_info = engine_instance.process_text(
+                        text=text,
+                        speaker_audio={"audio_path": reference_path},
+                        reference_text=reference_prompt,
+                        seed=seed,
+                        return_info=True,
+                    )
                 formatted_audio = AudioProcessingUtils.format_for_comfyui(
                     audio_result, getattr(engine_instance, "sample_rate", 32000)
                 )
@@ -1487,16 +1508,17 @@ Back to the main narrator voice for the conclusion.""",
 
             elif engine_type == "index_tts":
                 # IndexTTS-2 uses processor pattern - call through processor with emotion support
-                audio_result, chunk_info = engine_instance.process_text(
-                    text=text,
-                    speaker_audio=audio_tensor,
-                    reference_text=reference_text,
-                    seed=seed,
-                    enable_chunking=enable_chunking,
-                    max_chars_per_chunk=max_chars_per_chunk,
-                    silence_between_chunks_ms=silence_between_chunks_ms,
-                    return_info=True
-                )
+                with self._target_runtime_lease(engine_type, engine_instance):
+                    audio_result, chunk_info = engine_instance.process_text(
+                        text=text,
+                        speaker_audio=audio_tensor,
+                        reference_text=reference_text,
+                        seed=seed,
+                        enable_chunking=enable_chunking,
+                        max_chars_per_chunk=max_chars_per_chunk,
+                        silence_between_chunks_ms=silence_between_chunks_ms,
+                        return_info=True
+                    )
 
                 # Calculate statistics
                 total_duration = audio_result.shape[-1] / 22050.0  # IndexTTS-2 uses 22050 Hz
@@ -2075,13 +2097,14 @@ Back to the main narrator voice for the conclusion.""",
 
             elif engine_type == "cosyvoice":
                 # CosyVoice3 uses wrapper pattern - call directly through wrapper
-                result = engine_instance.generate_tts_audio(
-                    text=text,
-                    char_audio=audio_tensor,
-                    char_text=reference_text,
-                    character=char_display,
-                    seed=seed
-                )
+                with self._target_runtime_lease(engine_type, engine_instance):
+                    result = engine_instance.generate_tts_audio(
+                        text=text,
+                        char_audio=audio_tensor,
+                        char_text=reference_text,
+                        character=char_display,
+                        seed=seed
+                    )
 
             else:
                 raise ValueError(f"Unknown engine type: {engine_type}")
