@@ -301,7 +301,7 @@ def test_asset_store_rejects_a_registered_path_replaced_with_a_symlink(tmp_path:
     except OSError as exc:
         pytest.skip(f"symbolic links unavailable on this platform: {exc}")
 
-    with pytest.raises(ValueError, match="missing or tampered"):
+    with pytest.raises(ValueError, match="missing or tampered|outside the managed root"):
         store.require(asset.asset_id)
 
 

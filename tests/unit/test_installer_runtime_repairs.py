@@ -29,7 +29,7 @@ def test_fish_source_restore_accepts_namespace_package(tmp_path, monkeypatch):
     target_package = site_root / "fish_speech"
     target_package.mkdir(parents=True)
     (target_package / "content_sequence.py").write_text("", encoding="utf-8")
-    monkeypatch.setattr(sys, "path", [str(site_root)])
+    monkeypatch.setattr(sys, "path", [str(site_root), *sys.path])
 
     installer = INSTALL_MODULE.TTSAudioInstaller()
 
