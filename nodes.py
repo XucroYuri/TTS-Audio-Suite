@@ -235,6 +235,16 @@ except Exception as e:
     print(f"❌ CosyVoice3 Engine failed: {e}")
     COSYVOICE_ENGINE_AVAILABLE = False
 
+try:
+    api_bridge_engine_module = load_node_module("api_bridge_resource_engine_nodes", "api_bridge/resource_engine_nodes.py")
+    ExternalGPTSovitsEngineNode = api_bridge_engine_module.ExternalGPTSovitsEngineNode
+    ExternalIndexTTSEngineNode = api_bridge_engine_module.ExternalIndexTTSEngineNode
+    ExternalCosyVoiceEngineNode = api_bridge_engine_module.ExternalCosyVoiceEngineNode
+    API_BRIDGE_ENGINE_NODES_AVAILABLE = True
+except Exception as e:
+    print(f"❌ API Bridge Engine Nodes failed: {e}")
+    API_BRIDGE_ENGINE_NODES_AVAILABLE = False
+
 # IndexTTS-2 Emotion Options Node
 try:
     index_tts_emotion_options_module = load_node_module("index_tts_emotion_options_node", "engines/index_tts_emotion_options_node.py")
@@ -697,6 +707,14 @@ if INDEX_TTS_ENGINE_AVAILABLE:
 if COSYVOICE_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["CosyVoiceEngineNode"] = CosyVoiceEngineNode
     NODE_DISPLAY_NAME_MAPPINGS["CosyVoiceEngineNode"] = "⚙️ CosyVoice3 Engine"
+
+if API_BRIDGE_ENGINE_NODES_AVAILABLE:
+    NODE_CLASS_MAPPINGS["TTSExternalGPTSovitsEngine"] = ExternalGPTSovitsEngineNode
+    NODE_DISPLAY_NAME_MAPPINGS["TTSExternalGPTSovitsEngine"] = "API GPT-SoVITS Engine"
+    NODE_CLASS_MAPPINGS["TTSExternalIndexTTSEngine"] = ExternalIndexTTSEngineNode
+    NODE_DISPLAY_NAME_MAPPINGS["TTSExternalIndexTTSEngine"] = "API IndexTTS Engine"
+    NODE_CLASS_MAPPINGS["TTSExternalCosyVoiceEngine"] = ExternalCosyVoiceEngineNode
+    NODE_DISPLAY_NAME_MAPPINGS["TTSExternalCosyVoiceEngine"] = "API CosyVoice Engine"
 
 if INDEX_TTS_EMOTION_OPTIONS_AVAILABLE:
     NODE_CLASS_MAPPINGS["IndexTTSEmotionOptionsNode"] = IndexTTSEmotionOptionsNode

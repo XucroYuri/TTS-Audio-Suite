@@ -15,3 +15,4 @@ class TTSResource:
     sovits_weight: Path | None = None
     bert_path: Path | None = None
     cnhubert_path: Path | None = None
+    version: str = "v2"

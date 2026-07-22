@@ -4,6 +4,7 @@ version: 1
 resources:
   local-gpt-sovits:
     engine: gpt_sovits
+    version: v2
     source_root: C:/tts-resources/GPT-SoVITS
     gpt_weight: C:/tts-resources/GPT-SoVITS/GPT_weights/voice.ckpt
     sovits_weight: C:/tts-resources/GPT-SoVITS/SoVITS_weights/voice.pth

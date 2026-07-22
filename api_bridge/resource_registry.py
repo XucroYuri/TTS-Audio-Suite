@@ -11,6 +11,7 @@ from .models import TTSResource
 
 RESOURCE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 ENGINES = {"gpt_sovits", "index_tts", "cosyvoice"}
+GPT_SOVITS_VERSIONS = {"v1", "v2", "v3", "v4", "v2Pro", "v2ProPlus"}
 
 
 class ResourceRegistry:
@@ -66,6 +67,7 @@ def _build_resource(resource_id: str, raw: dict[str, Any]) -> TTSResource:
         sovits_weight=_resolved(raw, "sovits_weight"),
         bert_path=_resolved(raw, "bert_path"),
         cnhubert_path=_resolved(raw, "cnhubert_path"),
+        version=raw.get("version", "v2"),
     )
 
 
@@ -77,6 +79,8 @@ def _require_path(path: Path | None, label: str, *, directory: bool = False) -> 
 def _validate_resource(resource: TTSResource) -> None:
     _require_path(resource.source_root, f"{resource.resource_id}.source_root", directory=True)
     if resource.engine == "gpt_sovits":
+        if resource.version not in GPT_SOVITS_VERSIONS:
+            raise ValueError(f"invalid GPT-SoVITS version: {resource.version}")
         _require_path(resource.gpt_weight, f"{resource.resource_id}.gpt_weight")
         _require_path(resource.sovits_weight, f"{resource.resource_id}.sovits_weight")
     else:

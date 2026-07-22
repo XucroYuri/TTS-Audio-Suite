@@ -52,8 +52,63 @@ def test_registry_capabilities_are_redacted_and_sorted(tmp_path: Path):
         "sovits_weight",
         "bert_path",
         "cnhubert_path",
+        "version",
     }
     assert all(private_keys.isdisjoint(capability) for capability in capabilities)
+
+
+def test_registry_preserves_explicit_gpt_version_without_capability_leakage(tmp_path: Path):
+    source = tmp_path / "gpt"
+    source.mkdir()
+    gpt_weight = source / "voice.ckpt"
+    sovits_weight = source / "voice.pth"
+    gpt_weight.write_bytes(b"gpt")
+    sovits_weight.write_bytes(b"sovits")
+    config = tmp_path / "resources.yaml"
+    config.write_text(
+        "version: 1\nresources:\n  local-gpt:\n"
+        "    engine: gpt_sovits\n"
+        f"    source_root: '{source.as_posix()}'\n"
+        f"    gpt_weight: '{gpt_weight.as_posix()}'\n"
+        f"    sovits_weight: '{sovits_weight.as_posix()}'\n"
+        "    version: v2ProPlus\n",
+        encoding="utf-8",
+    )
+
+    registry = ResourceRegistry.load(config)
+
+    assert registry.require("local-gpt", "gpt_sovits").version == "v2ProPlus"
+    assert registry.capabilities() == [
+        {"resource_id": "local-gpt", "engine": "gpt_sovits", "ready": True}
+    ]
+
+
+def test_registry_defaults_gpt_version_and_rejects_unknown_versions(tmp_path: Path):
+    source = tmp_path / "gpt"
+    source.mkdir()
+    gpt_weight = source / "voice.ckpt"
+    sovits_weight = source / "voice.pth"
+    gpt_weight.write_bytes(b"gpt")
+    sovits_weight.write_bytes(b"sovits")
+
+    default_config = tmp_path / "default.yaml"
+    default_config.write_text(
+        "version: 1\nresources:\n  local-gpt:\n"
+        "    engine: gpt_sovits\n"
+        f"    source_root: '{source.as_posix()}'\n"
+        f"    gpt_weight: '{gpt_weight.as_posix()}'\n"
+        f"    sovits_weight: '{sovits_weight.as_posix()}'\n",
+        encoding="utf-8",
+    )
+    assert ResourceRegistry.load(default_config).require("local-gpt", "gpt_sovits").version == "v2"
+
+    invalid_config = tmp_path / "invalid.yaml"
+    invalid_config.write_text(
+        default_config.read_text(encoding="utf-8") + "    version: unsupported\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="invalid GPT-SoVITS version"):
+        ResourceRegistry.load(invalid_config)
 
 
 def test_registry_rejects_correct_resource_id_with_wrong_engine(tmp_path: Path):
