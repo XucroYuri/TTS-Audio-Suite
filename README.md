@@ -7,7 +7,7 @@
 [![Dynamic TOML Badge][version-shield]][version-url]
 [![Ko-Fi](https://img.shields.io/badge/Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/diogogo)
 
-# TTS Audio Suite v5.5.1
+# TTS Audio Suite v5.5.2
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/diogogo)
 
@@ -20,6 +20,16 @@
 A comprehensive ComfyUI extension providing unified Text-to-Speech, Voice Conversion, Audio Editing, and integrated RVC model training through multiple engines including ChatterboxTTS, F5-TTS, Higgs Audio 2, Higgs Audio v3, Step Audio EditX, MOSS-TTS, Echo-TTS, and RVC (Real-time Voice Conversion), with modular architecture designed for extensibility, runtime isolation for fragile legacy stacks, and a modern Transformers 5 main environment.
 
 Subtitle workflows are still a core focus: the suite can transcribe to SRT, rebuild subtitles from edited transcripts, or estimate fresh SRT timing from plain text using the same advanced readability rules, while preserving project control tags for downstream TTS.
+
+## XucroYuri fork: ComfyUI API bridge contract
+
+This section documents XucroYuri fork-specific integration behavior; it is not an upstream project commitment. The fork retains the complete upstream engine set and installer, while adding an API bridge for external clients.
+
+- Set `TTS_AUDIO_SUITE_RESOURCES` to the machine-local `resources.yaml` that defines bridge resources.
+- Discover available resource IDs at `/api/tts-audio-suite/v1/capabilities`.
+- Stage reference audio at `/api/tts-audio-suite/v1/assets/audio`.
+- Queue every synthesis request through ComfyUI's `/prompt` endpoint; the bridge does not provide a separate synthesis endpoint.
+- `/api/tts-audio-suite/v1/runtime/release` releases plugin runtimes. After it returns, clients must call ComfyUI's `/free` endpoint with both `unload_models` and `free_memory` set to `true`.
 
 <!-- ENGINE_COMPARISON_START -->
 

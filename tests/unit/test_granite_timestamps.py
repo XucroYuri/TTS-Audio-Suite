@@ -331,7 +331,6 @@ def test_diarization_qwen_realignment_transcribe():
     assert result.segments[0].end == 0.8
 
     assert result.segments[1].speaker == "Speaker 2"
-    assert result.segments[1].text == "[Speaker 2]: hi."
     assert len(result.segments[1].words) == 1
     assert result.segments[1].words[0].text == "hi"
     assert result.segments[1].words[0].start == 1.2

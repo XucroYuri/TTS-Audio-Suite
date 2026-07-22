@@ -691,6 +691,19 @@ print(json.dumps({"devices": devices}))
             except Exception as e:
                 print(f"⚠️ Error retrieving training progress: {e}")
                 return web.json_response({"nodes": {}, "error": str(e)}, status=500)
+
+        # The integration bridge is isolated from the legacy widget endpoints:
+        # a configuration/import failure here must never stop their registration.
+        try:
+            from api_bridge.routes import register_api_bridge_routes
+
+            register_api_bridge_routes(
+                PromptServer.instance.routes,
+                plugin_version=VERSION_DISPLAY,
+                prompt_server=PromptServer.instance,
+            )
+        except Exception as e:
+            print(f"⚠️ Could not setup TTS bridge support routes: {e}")
     except Exception as e:
         print(f"⚠️ Could not setup API routes: {e}")
 

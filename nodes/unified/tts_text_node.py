@@ -8,7 +8,9 @@ import numpy as np
 import os
 import hashlib
 import gc
+import uuid
 from typing import Dict, Any, Optional, List, Tuple
+from contextlib import nullcontext
 
 # Use direct file imports that work when loaded via importlib
 import os
@@ -46,6 +48,13 @@ from utils.voice.multilingual_engine import MultilingualEngine
 from utils.config_sanitizer import ConfigSanitizer
 import comfy.model_management as model_management
 import folder_paths
+from api_bridge.assets import pin_voice_asset
+from api_bridge.runtime_registry import (
+    RuntimeHandle,
+    get_runtime_registry,
+    make_cache_identity,
+    make_runtime_key,
+)
 
 # Global audio cache for unified TTS segments
 GLOBAL_AUDIO_CACHE = {}
@@ -131,6 +140,8 @@ Back to the main narrator voice for the conclusion.""",
     RETURN_NAMES = ("audio", "generation_info")
     FUNCTION = "generate_speech"
     CATEGORY = "TTS Audio Suite/🎤 Text to Speech"
+    _RUNTIME_OWNER = "text"
+    _TARGET_RUNTIME_ENGINES = frozenset({"gpt_sovits", "index_tts", "cosyvoice"})
 
     def __init__(self):
         super().__init__()
@@ -139,6 +150,66 @@ Back to the main narrator voice for the conclusion.""",
         self._current_adapter = None
         # Cache engine instances to prevent model reloading
         self._cached_engine_instances = {}
+        self._runtime_owner_token = uuid.uuid4().hex
+
+    def _runtime_key(self, cache_key: str) -> str:
+        return make_runtime_key(self._RUNTIME_OWNER, self._runtime_owner_token, cache_key)
+
+    def _target_runtime_lease(self, engine_type: str, engine_instance: Any):
+        if engine_type not in self._TARGET_RUNTIME_ENGINES:
+            return nullcontext()
+        runtime_key = getattr(engine_instance, "_api_bridge_runtime_key", None)
+        if not runtime_key:
+            raise RuntimeError(f"TTS runtime is not registered for {engine_type}")
+        return get_runtime_registry().lease(runtime_key)
+
+    def _register_target_runtime(
+        self,
+        cache_key: str,
+        engine_type: str,
+        config: Dict[str, Any],
+        resolved_device: str,
+        engine_instance: Any,
+    ) -> None:
+        """Make a target cache entry explicitly releasable by its exact owner."""
+        if engine_type not in self._TARGET_RUNTIME_ENGINES:
+            return
+        unload = getattr(engine_instance, "cleanup", None)
+        if not callable(unload):
+            unload = getattr(engine_instance, "unload", None)
+        if not callable(unload):
+            return
+
+        runtime_key = self._runtime_key(cache_key)
+        setattr(engine_instance, "_api_bridge_runtime_key", runtime_key)
+
+        def release_instance() -> None:
+            try:
+                unload()
+            finally:
+                cached_data = self._cached_engine_instances.get(cache_key)
+                cached_instance = (
+                    cached_data.get("instance")
+                    if isinstance(cached_data, dict)
+                    else cached_data
+                )
+                if cached_instance is engine_instance:
+                    self._cached_engine_instances.pop(cache_key, None)
+
+        get_runtime_registry().register(
+            RuntimeHandle.create(
+                runtime_key,
+                engine_type,
+                str(config.get("resource_id") or ""),
+                str(resolved_device),
+                release_instance,
+            )
+        )
+
+    def _release_target_runtime(self, cache_key: str, engine_type: str) -> dict[str, list[object]]:
+        if engine_type in self._TARGET_RUNTIME_ENGINES:
+            return get_runtime_registry().release(runtime_key=self._runtime_key(cache_key))
+        return {"released": [], "busy": [], "errors": []}
 
     def _create_proper_engine_node_instance(self, engine_data: Dict[str, Any]):
         """
@@ -243,21 +314,49 @@ Back to the main narrator voice for the conclusion.""",
                 stable_params['dtype'] = config.get('dtype', 'auto')
                 stable_params['attention'] = config.get('attention', 'auto')
 
-            # For IndexTTS-2, include low_vram in cache key since it requires model reload
+            # IndexTTS load identity must include every adapter initialization input.
             if engine_type == "index_tts":
+                cuda_kernel = config.get('use_cuda_kernel')
+                if cuda_kernel == "true":
+                    cuda_kernel = True
+                elif cuda_kernel == "false":
+                    cuda_kernel = False
+                elif cuda_kernel == "auto":
+                    cuda_kernel = None
+                stable_params['resource_id'] = config.get('resource_id')
+                stable_params['model_path'] = config.get('model_path')
+                stable_params['use_fp16'] = config.get('use_fp16', True)
+                stable_params['use_cuda_kernel'] = cuda_kernel
+                stable_params['use_deepspeed'] = config.get('use_deepspeed', False)
+                stable_params['use_torch_compile'] = config.get('use_torch_compile', False)
+                stable_params['use_accel'] = config.get('use_accel', False)
                 stable_params['low_vram'] = config.get('low_vram', False)
+
+            if engine_type == "gpt_sovits":
+                stable_params['resource_id'] = config.get('resource_id')
+                stable_params['gpt_weight'] = config.get('gpt_weight')
+                stable_params['sovits_weight'] = config.get('sovits_weight')
+                stable_params['bert_path'] = config.get('bert_path')
+                stable_params['cnhubert_path'] = config.get('cnhubert_path')
+                stable_params['gpt_sovits_home'] = config.get('gpt_sovits_home')
+                stable_params['version'] = config.get('version', 'v2')
+                stable_params['use_fp16'] = config.get('use_fp16', True)
 
             # For CosyVoice, include actual model identity and load options in cache key.
             # Both 0.5B variants share the same folder, so using only the resolved path or
             # generic "model" field is insufficient. Switching base <-> RL must force a
             # fresh processor/adapter instance or the old variant will keep being reused.
             if engine_type == "cosyvoice":
+                stable_params['resource_id'] = config.get('resource_id')
                 stable_params['model_path'] = config.get('model_path', 'Fun-CosyVoice3-0.5B-RL')
                 stable_params['use_fp16'] = config.get('use_fp16', True)
                 stable_params['load_trt'] = config.get('load_trt', False)
                 stable_params['load_vllm'] = config.get('load_vllm', False)
 
-            cache_key = f"{engine_type}_{hashlib.md5(str(sorted(stable_params.items())).encode()).hexdigest()[:8]}"
+            if engine_type in self._TARGET_RUNTIME_ENGINES:
+                cache_key = make_cache_identity(engine_type, stable_params)
+            else:
+                cache_key = f"{engine_type}_{hashlib.md5(str(sorted(stable_params.items())).encode()).hexdigest()[:8]}"
             
             # Cache key now properly includes model name for correct differentiation
             
@@ -279,16 +378,24 @@ Back to the main narrator voice for the conclusion.""",
                             cached_instance.update_config(config.copy())  # Propagate to processor
                         else:
                             cached_instance.config = config.copy()  # Fallback for other engines
+                        if engine_type in self._TARGET_RUNTIME_ENGINES:
+                            get_runtime_registry().touch(self._runtime_key(cache_key))
                         print(f"🔄 Reusing cached {engine_type} engine instance (updated with new generation parameters)")
                         return cached_instance
                     else:
                         # Cache invalidated by model unloading, remove it
                         print(f"🗑️ Removing invalidated {engine_type} engine cache (models were unloaded)")
-                        del self._cached_engine_instances[cache_key]
+                        release_report = self._release_target_runtime(cache_key, engine_type)
+                        if release_report["busy"]:
+                            raise RuntimeError(f"TTS runtime is busy for {engine_type}; retry cache invalidation later")
+                        self._cached_engine_instances.pop(cache_key, None)
                 else:
                     # Old format (direct instance) - assume invalid and remove
                     print(f"🗑️ Removing old-format {engine_type} engine cache (upgrading to timestamped format)")
-                    del self._cached_engine_instances[cache_key]
+                    release_report = self._release_target_runtime(cache_key, engine_type)
+                    if release_report["busy"]:
+                        raise RuntimeError(f"TTS runtime is busy for {engine_type}; retry cache invalidation later")
+                    self._cached_engine_instances.pop(cache_key, None)
             
             # print(f"🔧 Creating new {engine_type} engine instance")
             
@@ -497,6 +604,18 @@ Back to the main narrator voice for the conclusion.""",
                 }
                 return engine_instance
                 
+            elif engine_type == "gpt_sovits":
+                from engines.processors.gpt_sovits_processor import GPTSovitsProcessor
+
+                engine_instance = GPTSovitsProcessor(config)
+                import time
+                self._cached_engine_instances[cache_key] = {
+                    'instance': engine_instance,
+                    'timestamp': time.time()
+                }
+                self._register_target_runtime(cache_key, engine_type, config, resolved_device, engine_instance)
+                return engine_instance
+
             elif engine_type == "index_tts":
                 # Create IndexTTS processor instance using the adapter pattern
                 from engines.processors.index_tts_processor import IndexTTSProcessor
@@ -509,6 +628,7 @@ Back to the main narrator voice for the conclusion.""",
                     'instance': engine_instance,
                     'timestamp': time.time()
                 }
+                self._register_target_runtime(cache_key, engine_type, config, resolved_device, engine_instance)
 
                 return engine_instance
             
@@ -738,6 +858,13 @@ Back to the main narrator voice for the conclusion.""",
                         if self.processor is None:
                             self.processor = CosyVoiceProcessor(self.config)
                         return self.processor
+
+                    def cleanup(self):
+                        if self.processor is not None:
+                            self.processor.cleanup()
+                            self.processor = None
+
+                    unload = cleanup
                     
                     def generate_tts_audio(self, text, char_audio, char_text, character="narrator", **params):
                         processor = self._ensure_processor()
@@ -795,6 +922,7 @@ Back to the main narrator voice for the conclusion.""",
                     'instance': engine_instance,
                     'timestamp': time.time()
                 }
+                self._register_target_runtime(cache_key, engine_type, config, resolved_device, engine_instance)
                 return engine_instance
 
             else:
@@ -859,6 +987,14 @@ Back to the main narrator voice for the conclusion.""",
                     print(f"🎤 TTS Text: Using voice reference from Character Voices node ({character_name})")
                     # print(f"🐛 TTS_TEXT: Character Voices - character_name='{character_name}', has_audio={audio is not None}")
                     return audio_path, audio, reference_text, character_name
+
+                elif isinstance(opt_narrator, dict) and opt_narrator.get("audio_path"):
+                    return (
+                        opt_narrator["audio_path"],
+                        opt_narrator.get("audio"),
+                        opt_narrator.get("reference_text", ""),
+                        opt_narrator.get("character_name", "narrator"),
+                    )
                 
                 # Check if it's a direct audio input (dict with waveform and sample_rate)
                 elif isinstance(opt_narrator, dict) and "waveform" in opt_narrator:
@@ -1350,18 +1486,40 @@ Back to the main narrator voice for the conclusion.""",
                     silence_between_chunks_ms=silence_between_chunks_ms
                 )
                 
+            elif engine_type == "gpt_sovits":
+                reference_path = audio_path or config.get("ref_audio_override", "")
+                reference_prompt = reference_text or config.get("ref_text_override", "")
+                if not reference_path:
+                    raise ValueError(
+                        "GPT-SoVITS requires a reference audio file path. "
+                        "Use Character Voices or narrator_voice; raw waveform inputs cannot be used directly."
+                    )
+                with pin_voice_asset(opt_narrator), self._target_runtime_lease(engine_type, engine_instance):
+                    audio_result, generation_info = engine_instance.process_text(
+                        text=text,
+                        speaker_audio={"audio_path": reference_path},
+                        reference_text=reference_prompt,
+                        seed=seed,
+                        return_info=True,
+                    )
+                formatted_audio = AudioProcessingUtils.format_for_comfyui(
+                    audio_result, getattr(engine_instance, "sample_rate", 32000)
+                )
+                result = (formatted_audio, generation_info)
+
             elif engine_type == "index_tts":
                 # IndexTTS-2 uses processor pattern - call through processor with emotion support
-                audio_result, chunk_info = engine_instance.process_text(
-                    text=text,
-                    speaker_audio=audio_tensor,
-                    reference_text=reference_text,
-                    seed=seed,
-                    enable_chunking=enable_chunking,
-                    max_chars_per_chunk=max_chars_per_chunk,
-                    silence_between_chunks_ms=silence_between_chunks_ms,
-                    return_info=True
-                )
+                with pin_voice_asset(opt_narrator), self._target_runtime_lease(engine_type, engine_instance):
+                    audio_result, chunk_info = engine_instance.process_text(
+                        text=text,
+                        speaker_audio=audio_tensor,
+                        reference_text=reference_text,
+                        seed=seed,
+                        enable_chunking=enable_chunking,
+                        max_chars_per_chunk=max_chars_per_chunk,
+                        silence_between_chunks_ms=silence_between_chunks_ms,
+                        return_info=True
+                    )
 
                 # Calculate statistics
                 total_duration = audio_result.shape[-1] / 22050.0  # IndexTTS-2 uses 22050 Hz
@@ -1940,13 +2098,14 @@ Back to the main narrator voice for the conclusion.""",
 
             elif engine_type == "cosyvoice":
                 # CosyVoice3 uses wrapper pattern - call directly through wrapper
-                result = engine_instance.generate_tts_audio(
-                    text=text,
-                    char_audio=audio_tensor,
-                    char_text=reference_text,
-                    character=char_display,
-                    seed=seed
-                )
+                with pin_voice_asset(opt_narrator), self._target_runtime_lease(engine_type, engine_instance):
+                    result = engine_instance.generate_tts_audio(
+                        text=text,
+                        char_audio=audio_tensor,
+                        char_text=reference_text,
+                        character=char_display,
+                        seed=seed
+                    )
 
             else:
                 raise ValueError(f"Unknown engine type: {engine_type}")

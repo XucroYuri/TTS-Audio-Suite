@@ -11,7 +11,7 @@ except ImportError:
     pass
 
 # Version and constants
-VERSION = "5.5.1"
+VERSION = "5.5.2"
 IS_DEV = False  # Set to False for release builds
 VERSION_DISPLAY = f"v{VERSION}" + (" (dev)" if IS_DEV else "")
 SEPARATOR = "=" * 70
@@ -96,6 +96,14 @@ try:
 except Exception as e:
     print(f"❌ F5 TTS Engine failed: {e}")
     F5TTS_ENGINE_AVAILABLE = False
+
+try:
+    gpt_sovits_engine_module = load_node_module("gpt_sovits_engine_node", "engines/gpt_sovits_engine_node.py")
+    GPTSovitsEngineNode = gpt_sovits_engine_module.GPTSovitsEngineNode
+    GPT_SOVITS_ENGINE_AVAILABLE = True
+except Exception as e:
+    print(f"❌ GPT-SoVITS Engine failed: {e}")
+    GPT_SOVITS_ENGINE_AVAILABLE = False
 
 try:
     higgs_audio_engine_module = load_node_module("higgs_audio_engine_node", "engines/higgs_audio_engine_node.py")
@@ -226,6 +234,24 @@ try:
 except Exception as e:
     print(f"❌ CosyVoice3 Engine failed: {e}")
     COSYVOICE_ENGINE_AVAILABLE = False
+
+try:
+    api_bridge_engine_module = load_node_module("api_bridge_resource_engine_nodes", "api_bridge/resource_engine_nodes.py")
+    ExternalGPTSovitsEngineNode = api_bridge_engine_module.ExternalGPTSovitsEngineNode
+    ExternalIndexTTSEngineNode = api_bridge_engine_module.ExternalIndexTTSEngineNode
+    ExternalCosyVoiceEngineNode = api_bridge_engine_module.ExternalCosyVoiceEngineNode
+    API_BRIDGE_ENGINE_NODES_AVAILABLE = True
+except Exception as e:
+    print(f"❌ API Bridge Engine Nodes failed: {e}")
+    API_BRIDGE_ENGINE_NODES_AVAILABLE = False
+
+try:
+    api_bridge_asset_module = load_node_module("api_bridge_audio_asset_node", "api_bridge/audio_asset_node.py")
+    ExternalAudioAssetNode = api_bridge_asset_module.ExternalAudioAssetNode
+    API_BRIDGE_AUDIO_ASSET_NODE_AVAILABLE = True
+except Exception as e:
+    print(f"❌ API Bridge Audio Asset Node failed: {e}")
+    API_BRIDGE_AUDIO_ASSET_NODE_AVAILABLE = False
 
 # IndexTTS-2 Emotion Options Node
 try:
@@ -622,6 +648,10 @@ if F5TTS_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["F5TTSEngineNode"] = F5TTSEngineNode
     NODE_DISPLAY_NAME_MAPPINGS["F5TTSEngineNode"] = "⚙️ F5 TTS Engine"
 
+if GPT_SOVITS_ENGINE_AVAILABLE:
+    NODE_CLASS_MAPPINGS["GPTSovitsEngineNode"] = GPTSovitsEngineNode
+    NODE_DISPLAY_NAME_MAPPINGS["GPTSovitsEngineNode"] = "⚙️ GPT-SoVITS Engine"
+
 if HIGGS_AUDIO_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["HiggsAudioEngineNode"] = HiggsAudioEngineNode
     NODE_DISPLAY_NAME_MAPPINGS["HiggsAudioEngineNode"] = "⚙️ Higgs Audio 2 Engine"
@@ -685,6 +715,18 @@ if INDEX_TTS_ENGINE_AVAILABLE:
 if COSYVOICE_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["CosyVoiceEngineNode"] = CosyVoiceEngineNode
     NODE_DISPLAY_NAME_MAPPINGS["CosyVoiceEngineNode"] = "⚙️ CosyVoice3 Engine"
+
+if API_BRIDGE_ENGINE_NODES_AVAILABLE:
+    NODE_CLASS_MAPPINGS["TTSExternalGPTSovitsEngine"] = ExternalGPTSovitsEngineNode
+    NODE_DISPLAY_NAME_MAPPINGS["TTSExternalGPTSovitsEngine"] = "API GPT-SoVITS Engine"
+    NODE_CLASS_MAPPINGS["TTSExternalIndexTTSEngine"] = ExternalIndexTTSEngineNode
+    NODE_DISPLAY_NAME_MAPPINGS["TTSExternalIndexTTSEngine"] = "API IndexTTS Engine"
+    NODE_CLASS_MAPPINGS["TTSExternalCosyVoiceEngine"] = ExternalCosyVoiceEngineNode
+    NODE_DISPLAY_NAME_MAPPINGS["TTSExternalCosyVoiceEngine"] = "API CosyVoice Engine"
+
+if API_BRIDGE_AUDIO_ASSET_NODE_AVAILABLE:
+    NODE_CLASS_MAPPINGS["TTSExternalAudioAsset"] = ExternalAudioAssetNode
+    NODE_DISPLAY_NAME_MAPPINGS["TTSExternalAudioAsset"] = "API Reference Audio Asset"
 
 if INDEX_TTS_EMOTION_OPTIONS_AVAILABLE:
     NODE_CLASS_MAPPINGS["IndexTTSEmotionOptionsNode"] = IndexTTSEmotionOptionsNode

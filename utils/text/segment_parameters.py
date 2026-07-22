@@ -103,11 +103,11 @@ PARAMETER_ENGINES = {
         'chatterbox', 'chatterbox_official_23lang', 'f5tts', 'higgs_audio',
         'higgs_audio_v3', 'vibevoice', 'index_tts', 'step_audio_editx', 'cosyvoice', 'qwen3_tts',
         'dots_tts', 'fish_audio_s2', 'omnivoice',
-        'echo_tts', 'moss_tts', 'moss_soundeffect_v2'
+        'echo_tts', 'moss_tts', 'moss_soundeffect_v2', 'gpt_sovits'
     },
     'temperature': {
         'chatterbox', 'chatterbox_official_23lang', 'f5tts', 'higgs_audio',
-        'higgs_audio_v3', 'vibevoice', 'index_tts', 'step_audio_editx', 'qwen3_tts', 'moss_tts', 'fish_audio_s2'
+        'higgs_audio_v3', 'vibevoice', 'index_tts', 'step_audio_editx', 'qwen3_tts', 'moss_tts', 'fish_audio_s2', 'gpt_sovits'
     },
     'cfg': {
         'f5tts', 'vibevoice', 'index_tts', 'chatterbox', 'chatterbox_official_23lang',

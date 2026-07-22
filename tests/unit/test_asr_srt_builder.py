@@ -188,11 +188,14 @@ def test_punctuation_only_word_stream_does_not_crash_srt_builder():
     assert stats["punct"] == []
 
 
-def test_speaker_state_tags_consume_trailing_colon_for_alignment():
+def test_speaker_state_tags_preserve_alignment_and_adjacent_word_spacing():
     full_text = "[Speaker 1]: Jane. [Speaker 2]: Mark."
     profile = parse_tagged_text(full_text)
 
     assert profile.spoken_text == " Jane.   Mark."
+    adjacent_profile = parse_tagged_text("Jane[Speaker 2]:Mark.")
+    assert adjacent_profile.spoken_text == "Jane Mark."
+    assert adjacent_profile.word_count == 2
 
     words = [
         ASRWord(start=0.0, end=0.4, text="Jane"),

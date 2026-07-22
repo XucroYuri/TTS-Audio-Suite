@@ -902,6 +902,7 @@ class TTSAudioInstaller:
             # IndexTTS-2 engine dependencies (tested safe - no conflicts found)
             "cn2an>=0.5.22",              # Chinese number to Arabic number conversion
             "g2p-en>=2.1.0",              # English grapheme-to-phoneme conversion
+            "wordsegment",                 # GPT-SoVITS English text normalization
             "json5>=0.12.0",              # JSON5 parsing for IndexTTS-2 config files
             "keras>=2.9.0",               # Deep learning framework
             "modelscope>=1.27.0",         # Chinese model hub for IndexTTS-2
