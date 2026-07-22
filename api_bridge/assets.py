@@ -72,6 +72,10 @@ class AudioAssetStore:
         self.max_total_bytes = max_total_bytes
         self.max_assets = max_assets
         self._assets: dict[str, AudioAsset] = {}
+        self._managed_paths: dict[str, tuple[Path, ...]] = {}
+        self._managed_sizes: dict[Path, int] = {}
+        self._conflicts: set[str] = set()
+        self._file_count = 0
         self._pins: dict[str, int] = {}
         self._lock = RLock()
         self._total_bytes = 0
@@ -99,6 +103,9 @@ class AudioAssetStore:
                 raise
             asset = AudioAsset(asset_id, destination, hashlib.sha256(content).hexdigest(), len(content))
             self._assets[asset_id] = asset
+            self._managed_paths[asset_id] = (destination,)
+            self._managed_sizes[destination] = asset.size_bytes
+            self._file_count += 1
             self._total_bytes += asset.size_bytes
             return asset
 
@@ -109,7 +116,7 @@ class AudioAssetStore:
     def known(self, asset_id: str) -> AudioAsset:
         """Return registered metadata without decoding, for explicit cleanup."""
         with self._lock:
-            return self._asset_unlocked(asset_id)
+            return self._asset_unlocked(asset_id, allow_conflict=True)
 
     @contextmanager
     def lease(self, asset_id: str) -> Iterator[AudioAssetSnapshot]:
@@ -142,31 +149,52 @@ class AudioAssetStore:
                 raise ValueError(f"unknown asset_id: {asset_id}")
             if self._pins.get(asset_id, 0):
                 raise AssetInUseError("asset_in_use")
-            path = self._registered_path(asset)
-            if path.exists():
-                path.unlink()
-            self._total_bytes -= asset.size_bytes
+            paths = self._managed_paths[asset_id]
+            for path in paths:
+                registered = self._registered_path(AudioAsset(asset_id, path, "", self._managed_sizes[path]))
+                if registered.exists():
+                    registered.unlink()
+                self._total_bytes -= self._managed_sizes.pop(path)
+                self._file_count -= 1
             del self._assets[asset_id]
+            del self._managed_paths[asset_id]
+            self._conflicts.discard(asset_id)
 
     def _rebuild_index(self) -> None:
         with self._lock:
+            grouped: dict[str, list[Path]] = {}
             for path in self.root.iterdir():
                 match = _MANAGED_NAME.fullmatch(path.name)
                 if match is None or match.group("suffix") not in ALLOWED_EXTENSIONS:
                     continue
                 if path.is_symlink() or not path.is_file() or not path.resolve(strict=False).is_relative_to(self.root):
                     continue
-                size = path.stat().st_size
-                content = path.read_bytes()
-                valid = size <= self.max_bytes and self._is_valid_audio(path)
                 asset_id = match.group("asset_id")
-                self._assets[asset_id] = AudioAsset(
-                    asset_id, path.resolve(), hashlib.sha256(content).hexdigest(), size, valid=valid
-                )
-                self._total_bytes += size
+                grouped.setdefault(asset_id, []).append(path.resolve())
+            for asset_id, paths in sorted(grouped.items()):
+                paths = sorted(paths)
+                records: list[tuple[Path, int, str, bool]] = []
+                for path in paths:
+                    size = path.stat().st_size
+                    self._file_count += 1
+                    self._managed_sizes[path] = size
+                    self._total_bytes += size
+                    if size > self.max_bytes:
+                        records.append((path, size, "", False))
+                        continue
+                    with path.open("rb") as handle:
+                        content = handle.read(self.max_bytes + 1)
+                    stable = path.stat().st_size == size and len(content) == size
+                    records.append((path, size, hashlib.sha256(content).hexdigest() if stable else "", stable and self._is_valid_audio(path)))
+                primary, size, digest, valid = records[0]
+                self._managed_paths[asset_id] = tuple(paths)
+                if len(paths) > 1:
+                    self._conflicts.add(asset_id)
+                    valid = False
+                self._assets[asset_id] = AudioAsset(asset_id, primary, digest, size, valid=valid)
 
     def _check_quota(self, incoming_bytes: int) -> None:
-        if len(self._assets) >= self.max_assets or self._total_bytes + incoming_bytes > self.max_total_bytes:
+        if self._file_count >= self.max_assets or self._total_bytes + incoming_bytes > self.max_total_bytes:
             raise AssetQuotaError("asset_quota_exceeded")
 
     def _require_unlocked(self, asset_id: str) -> AudioAsset:
@@ -174,10 +202,12 @@ class AudioAssetStore:
         self._read_verified_content(asset)
         return asset
 
-    def _asset_unlocked(self, asset_id: str) -> AudioAsset:
+    def _asset_unlocked(self, asset_id: str, *, allow_conflict: bool = False) -> AudioAsset:
         asset = self._assets.get(asset_id)
         if asset is None:
             raise ValueError(f"unknown asset_id: {asset_id}")
+        if asset_id in self._conflicts and not allow_conflict:
+            raise ValueError("asset conflict")
         return asset
 
     def _destination(self, asset_id: str, suffix: str) -> Path:
@@ -230,6 +260,14 @@ class AudioAssetStore:
 @contextmanager
 def pin_voice_asset(voice: Any, *, store: AudioAssetStore | None = None) -> Iterator[None]:
     """Pin only bridge-owned voices; ordinary upstream voice dictionaries pass through."""
+    seen: set[int] = set()
+    while isinstance(voice, (list, tuple)):
+        marker = id(voice)
+        if marker in seen or len(voice) != 1:
+            voice = None
+            break
+        seen.add(marker)
+        voice = voice[0]
     asset_id = voice.get("asset_id") if isinstance(voice, dict) else None
     if not isinstance(asset_id, str) or not asset_id:
         with nullcontext():

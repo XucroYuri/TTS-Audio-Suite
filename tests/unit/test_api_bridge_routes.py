@@ -11,7 +11,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 import pytest
 
-from api_bridge.assets import AssetInUseError
+from api_bridge.assets import AssetInUseError, AssetQuotaError
 
 from api_bridge.routes import (
     build_capabilities_payload,
@@ -402,6 +402,51 @@ def test_upload_moves_blocking_asset_creation_off_the_aiohttp_event_loop():
         assert not task.done()
         release.set()
         assert (await task).status == 201
+
+    asyncio.run(run())
+
+
+def test_upload_returns_stable_507_for_asset_quota_exhaustion():
+    async def run():
+        class FullStore(AssetStore):
+            def create(self, filename, content):
+                raise AssetQuotaError("asset_quota_exceeded")
+
+        routes = web.RouteTableDef()
+        register_api_bridge_routes(routes, plugin_version="test", asset_store_getter=FullStore)
+        handler = next(item.handler for item in routes if item.path.endswith("/assets/audio") and item.method == "POST")
+        response = await handler(UploadRequest([UploadField("audio", "voice.wav", [b"12"])]))
+        assert response.status == 507
+        assert json.loads(response.body) == {"error": "asset_quota_exceeded"}
+
+    asyncio.run(run())
+
+
+def test_runtime_release_runs_unload_off_the_aiohttp_event_loop():
+    async def run():
+        entered = Event()
+        release = Event()
+
+        class SlowRuntime(RuntimeRegistry):
+            def release(self, **kwargs):
+                entered.set()
+                assert release.wait(timeout=2)
+                return super().release(**kwargs)
+
+        routes = web.RouteTableDef()
+        runtime = SlowRuntime()
+        register_api_bridge_routes(routes, plugin_version="test", runtime_registry_getter=lambda: runtime)
+        handler = next(item.handler for item in routes if item.path.endswith("/runtime/release"))
+
+        class Request:
+            async def json(self): return {"all": True}
+
+        task = asyncio.create_task(handler(Request()))
+        assert await asyncio.to_thread(entered.wait, 1)
+        await asyncio.sleep(0)
+        assert not task.done()
+        release.set()
+        assert (await task).status == 200
 
     asyncio.run(run())
 

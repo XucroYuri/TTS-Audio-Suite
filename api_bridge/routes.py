@@ -14,7 +14,7 @@ from typing import Any
 from aiohttp import web
 
 from . import BRIDGE_PROTOCOL_VERSION
-from .assets import AssetInUseError, get_audio_asset_store
+from .assets import AssetInUseError, AssetQuotaError, get_audio_asset_store
 from .resource_registry import get_resource_registry
 from .runtime_registry import get_runtime_registry
 
@@ -223,6 +223,8 @@ def register_api_bridge_routes(
             )
         except _AudioTooLarge:
             return web.json_response({"error": "audio_too_large"}, status=413)
+        except AssetQuotaError:
+            return web.json_response({"error": "asset_quota_exceeded"}, status=507)
         except (AssertionError, ValueError, web.HTTPBadRequest):
             return web.json_response({"error": "invalid_audio_upload"}, status=400)
         except web.HTTPRequestEntityTooLarge:
@@ -264,7 +266,7 @@ def register_api_bridge_routes(
             LOGGER.exception("Failed to parse TTS bridge runtime release request")
             return web.json_response({"error": "invalid_runtime_release"}, status=400)
         try:
-            report = runtime_registry_getter().release(**selector)
+            report = await asyncio.to_thread(runtime_registry_getter().release, **selector)
             if report["errors"]:
                 status = 500
             elif report["busy"]:

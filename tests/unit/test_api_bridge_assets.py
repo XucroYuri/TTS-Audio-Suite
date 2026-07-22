@@ -158,6 +158,23 @@ def test_voice_asset_pin_uses_only_the_external_asset_identity(tmp_path: Path):
     store.delete(asset.asset_id)
 
 
+def test_voice_asset_pin_normalizes_only_single_wrappers_and_rejects_cycles(tmp_path: Path):
+    store = AudioAssetStore(tmp_path)
+    asset = store.create("reference.wav", wav_bytes())
+    wrapped = [{"asset_id": asset.asset_id}]
+    with pin_voice_asset(wrapped, store=store):
+        with pytest.raises(AssetInUseError):
+            store.delete(asset.asset_id)
+
+    with pin_voice_asset([{"asset_id": asset.asset_id}, {"asset_id": asset.asset_id}], store=store):
+        pass
+    cyclic = []
+    cyclic.append(cyclic)
+    with pin_voice_asset(cyclic, store=store):
+        pass
+    store.delete(asset.asset_id)
+
+
 def test_asset_store_enforces_total_bytes_and_count_without_deleting_existing_assets(tmp_path: Path):
     content = wav_bytes()
     store = AudioAssetStore(tmp_path, max_total_bytes=len(content) * 2, max_assets=1)
@@ -208,6 +225,23 @@ def test_asset_store_rebuilds_managed_assets_after_restart_and_keeps_invalid_res
         rebuilt.require(invalid_id)
     rebuilt.delete(invalid_id)
     assert not invalid_path.exists()
+
+
+def test_rebuild_conflicting_uuid_files_are_counted_rejected_and_deleted_together(tmp_path: Path):
+    asset_id = "b" * 32
+    wav = tmp_path / f"{asset_id}.wav"
+    flac = tmp_path / f"{asset_id}.flac"
+    wav.write_bytes(wav_bytes())
+    flac.write_bytes(wav_bytes())
+    store = AudioAssetStore(tmp_path, max_total_bytes=len(wav_bytes()) * 2, max_assets=2)
+
+    with pytest.raises(ValueError, match="conflict"):
+        store.require(asset_id)
+    assert store._total_bytes == wav.stat().st_size + flac.stat().st_size
+    assert store._managed_paths[asset_id] == (flac.resolve(), wav.resolve())
+    store.delete(asset_id)
+    assert not wav.exists() and not flac.exists()
+    assert store._total_bytes == 0
 
 
 @pytest.mark.unit
