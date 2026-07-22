@@ -155,15 +155,11 @@ def test_native_engine_resolves_home_weights_when_comfy_directory_is_empty(tmp_p
 
 
 def test_official_runtime_contract_and_lightweight_dependency_are_declared():
-    checkout = Path(r"J:\TTS\GPT-SoVITS\GPT-SoVITS")
-    tts_source = (checkout / "GPT_SoVITS" / "TTS_infer_pack" / "TTS.py").read_text(encoding="utf-8")
     adapter_source = Path(__file__).parents[2].joinpath("engines", "adapters", "gpt_sovits_adapter.py").read_text(encoding="utf-8")
     requirements = Path(__file__).parents[2].joinpath("requirements.txt").read_text(encoding="utf-8")
 
-    assert "class TTS_Config" in tts_source
-    assert "def run(self, inputs: dict)" in tts_source
-    assert "from feature_extractor.cnhubert import CNHubert" in tts_source
-    assert "from sv import SV" in tts_source
+    assert "from TTS_infer_pack.TTS import TTS, TTS_Config" in adapter_source
+    assert "self.runtime.run(inputs)" in adapter_source
     assert "inference_webui" not in adapter_source
     assert "wordsegment" in requirements
 
