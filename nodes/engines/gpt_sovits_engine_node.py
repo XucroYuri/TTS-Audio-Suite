@@ -28,6 +28,7 @@ BaseTTSNode = base_module.BaseTTSNode
 
 import folder_paths
 from engines.gpt_sovits.weight_scanner import resolve_paths, scan_weights, scan_reference_audio
+from utils.device import resolve_torch_device
 
 
 class AnyType(str):
@@ -50,20 +51,6 @@ class GPTSovitsEngineNode(BaseTTSNode):
 
     @classmethod
     def INPUT_TYPES(cls):
-        # Scan for available weight pairs
-        base_dir = os.path.join(folder_paths.models_dir, "TTS", "GPT-SoVITS")
-        scan_result = scan_weights(base_dir) if os.path.isdir(base_dir) else {"pairs": [], "pretrained": []}
-
-        # Build weight pair options
-        pair_options = []
-        for pair in scan_result["pretrained"]:
-            pair_options.append(f"[Pretrained] {pair['label']}")
-        for pair in scan_result["pairs"]:
-            pair_options.append(f"[{pair['version']}] {pair['exp_name']}")
-
-        if not pair_options:
-            pair_options = ["(No models found in models/TTS/GPT-SoVITS/)"]
-
         # Text splitting methods (from official WebUI)
         cut_methods = ["凑四句一切", "凑50字一切", "按中文句号。切", "按英文句号.切", "按标点符号切", "不切"]
 
@@ -72,9 +59,13 @@ class GPTSovitsEngineNode(BaseTTSNode):
 
         return {
             "required": {
-                "weight_pair": (pair_options, {
-                    "default": pair_options[0],
-                    "tooltip": "Select a matched GPT + SoVITS weight pair.\nPretrained options use base models for zero-shot cloning.\nUser-trained pairs show [version] experiment_name."
+                "weight_pair": ("STRING", {
+                    "default": "auto",
+                    "tooltip": (
+                        "Use auto when the selected source has one weight pair. "
+                        "For multiple pairs, use [version] experiment_name or pair:version:experiment. "
+                        "This stays usable when gpt_sovits_home points to a local checkout not visible to the static ComfyUI model scan."
+                    )
                 }),
                 "text_language": (languages, {
                     "default": "中文",
@@ -157,13 +148,25 @@ class GPTSovitsEngineNode(BaseTTSNode):
         )
         scan_result = scan_weights(paths.get("base_dir", ""), paths.get("pretrained_dir"))
 
-        for pret in scan_result.get("pretrained", []):
-            if selection == f"[Pretrained] {pret['label']}":
-                return {**pret, **paths}
+        candidates = [
+            ({**pret, **paths}, f"[Pretrained] {pret['label']}", f"pretrained:{pret['version']}")
+            for pret in scan_result.get("pretrained", [])
+        ]
+        candidates.extend(
+            ({**pair, **paths}, f"[{pair['version']}] {pair['exp_name']}", f"pair:{pair['version']}:{pair['exp_name']}")
+            for pair in scan_result.get("pairs", [])
+        )
+        if selection.strip().lower() == "auto":
+            if len(candidates) == 1:
+                return candidates[0][0]
+            if len(candidates) > 1:
+                choices = ", ".join(stable_id for _, _, stable_id in candidates)
+                raise ValueError(f"Multiple GPT-SoVITS weight pairs found; set weight_pair to one of: {choices}")
+            return None
 
-        for pair in scan_result.get("pairs", []):
-            if selection == f"[{pair['version']}] {pair['exp_name']}":
-                return {**pair, **paths}
+        for resolved, legacy_label, stable_id in candidates:
+            if selection in {legacy_label, stable_id}:
+                return resolved
 
         return None
 
@@ -194,9 +197,9 @@ class GPTSovitsEngineNode(BaseTTSNode):
             if resolved is None:
                 raise ValueError(f"Could not resolve weight pair: {weight_pair}")
 
-            if device == "auto":
-                import torch
-                device = "cuda" if torch.cuda.is_available() else "cpu"
+            device = resolve_torch_device(device)
+            if device == "cpu":
+                use_fp16 = False
 
             # Validate paths
             for key, label in [

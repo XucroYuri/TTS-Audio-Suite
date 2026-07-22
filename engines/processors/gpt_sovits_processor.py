@@ -24,6 +24,8 @@ class GPTSovitsProcessor:
         }
         if self.config.get("gpt_sovits_home"):
             initialize_kwargs["gpt_sovits_home"] = self.config["gpt_sovits_home"]
+        if self.config.get("version"):
+            initialize_kwargs["version"] = self.config["version"]
         self.adapter.initialize_engine(**initialize_kwargs)
 
     def update_config(self, new_config: dict[str, Any]) -> None:

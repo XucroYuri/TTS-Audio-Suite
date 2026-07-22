@@ -29,6 +29,7 @@ def test_processor_initializes_generates_and_unloads():
         {
             "gpt_weight": "gpt.ckpt",
             "sovits_weight": "sovits.pth",
+            "version": "v2ProPlus",
             "bert_path": "bert",
             "cnhubert_path": "hubert",
             "device": "cuda",
@@ -58,6 +59,7 @@ def test_processor_initializes_generates_and_unloads():
     assert adapter.initialized == {
         "gpt_weight": "gpt.ckpt",
         "sovits_weight": "sovits.pth",
+        "version": "v2ProPlus",
         "bert_path": "bert",
         "cnhubert_path": "hubert",
         "device": "cuda",

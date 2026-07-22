@@ -666,6 +666,29 @@ class OmniVoiceCacheKeyGenerator(CacheKeyGenerator):
         return hashlib.md5(cache_string.encode()).hexdigest()
 
 
+class GPTSovitsCacheKeyGenerator(CacheKeyGenerator):
+    """Cache key generator for official GPT-SoVITS inference."""
+
+    def generate_cache_key(self, **params) -> str:
+        cache_data = {
+            "engine": "gpt_sovits",
+            "gpt_weight": params.get("gpt_weight", ""),
+            "sovits_weight": params.get("sovits_weight", ""),
+            "ref_audio_path": params.get("ref_audio_path", ""),
+            "ref_text": params.get("ref_text", ""),
+            "ref_lang": params.get("ref_lang", "zh"),
+            "text_lang": params.get("text_lang", "zh"),
+            "text": params.get("text", ""),
+            "top_k": int(params.get("top_k", 15)),
+            "top_p": float(params.get("top_p", 1.0)),
+            "temperature": float(params.get("temperature", 1.0)),
+            "speed": float(params.get("speed", 1.0)),
+            "how_to_cut": params.get("how_to_cut", "凑四句一切"),
+            "seed": params.get("seed"),
+        }
+        return hashlib.md5(repr(sorted(cache_data.items())).encode()).hexdigest()
+
+
 class AudioCache:
     """Unified audio cache manager for all TTS engines."""
     
@@ -686,7 +709,8 @@ class AudioCache:
             'omnivoice': OmniVoiceCacheKeyGenerator(),
             'moss_tts': MossTTSCacheKeyGenerator(),
             'moss_soundeffect_v2': MossSoundEffectV2CacheKeyGenerator(),
-            'echo_tts': EchoTTSCacheKeyGenerator()
+            'echo_tts': EchoTTSCacheKeyGenerator(),
+            'gpt_sovits': GPTSovitsCacheKeyGenerator(),
         }
     
     def register_cache_key_generator(self, engine_type: str, generator: CacheKeyGenerator):
