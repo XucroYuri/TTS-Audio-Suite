@@ -1,5 +1,7 @@
 import importlib.util
 from pathlib import Path
+import os
+import sys
 
 import numpy as np
 import torch
@@ -158,7 +160,7 @@ def test_official_runtime_contract_and_lightweight_dependency_are_declared():
     adapter_source = Path(__file__).parents[2].joinpath("engines", "adapters", "gpt_sovits_adapter.py").read_text(encoding="utf-8")
     requirements = Path(__file__).parents[2].joinpath("requirements.txt").read_text(encoding="utf-8")
 
-    assert "from TTS_infer_pack.TTS import TTS, TTS_Config" in adapter_source
+    assert 'importlib.import_module("TTS_infer_pack.TTS")' in adapter_source
     assert "self.runtime.run(inputs)" in adapter_source
     assert "inference_webui" not in adapter_source
     assert "wordsegment" in requirements
@@ -171,3 +173,48 @@ def test_nodes_module_registers_the_native_gpt_sovits_engine():
     spec.loader.exec_module(module)
 
     assert module.NODE_CLASS_MAPPINGS["GPTSovitsEngineNode"] is module.GPTSovitsEngineNode
+
+
+def test_official_import_is_bound_to_checkout_without_changing_caller_cwd(tmp_path):
+    checkout = tmp_path / "checkout"
+    package_root = checkout / "GPT_SoVITS"
+    tts_package = package_root / "TTS_infer_pack"
+    eres2net = package_root / "eres2net"
+    tts_package.mkdir(parents=True)
+    eres2net.mkdir()
+    (tts_package / "__init__.py").touch()
+    (eres2net / "ERes2NetV2.py").write_text("MARKER = 'eres2net-ok'\n", encoding="utf-8")
+    (package_root / "sv.py").write_text("sv_path = 'relative-sv.ckpt'\n", encoding="utf-8")
+    (tts_package / "TTS.py").write_text(
+        "import os\n"
+        "now_dir = os.getcwd()\n"
+        "from ERes2NetV2 import MARKER\n"
+        "import sv\n"
+        "class TTS_Config:\n"
+        "    default_configs = {'v2': {'t2s_weights_path': 'GPT_SoVITS/pretrained_models/a.ckpt'}}\n"
+        "    def __init__(self, config):\n"
+        "        os.makedirs('GPT_SoVITS/configs', exist_ok=True)\n"
+        "        self.config = config\n"
+        "        self.sampling_rate = 32000\n"
+        "class TTS:\n"
+        "    def __init__(self, config): self.config = config\n",
+        encoding="utf-8",
+    )
+    caller_cwd = os.getcwd()
+    for module_name in ("TTS_infer_pack.TTS", "TTS_infer_pack", "sv", "ERes2NetV2"):
+        sys.modules.pop(module_name, None)
+
+    adapter = GPTSovitsAdapter()
+    adapter.initialize_engine(
+        "gpt.ckpt", "sovits.pth", "bert", "hubert",
+        device="cpu", use_fp16=False, gpt_sovits_home=str(checkout),
+    )
+
+    tts_module = sys.modules["TTS_infer_pack.TTS"]
+    sv_module = sys.modules["sv"]
+    assert os.getcwd() == caller_cwd
+    assert tts_module.now_dir == str(checkout.resolve())
+    assert sv_module.sv_path == str(checkout / "GPT_SoVITS" / "pretrained_models" / "sv" / "pretrained_eres2netv2w24s4ep4.ckpt")
+    assert sys.modules["ERes2NetV2"].MARKER == "eres2net-ok"
+    assert not Path(caller_cwd, "GPT_SoVITS", "configs").exists()
+    assert adapter.runtime_config.default_configs["v2"]["t2s_weights_path"] == str(checkout / "GPT_SoVITS" / "pretrained_models" / "a.ckpt")

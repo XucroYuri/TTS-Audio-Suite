@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import gc
+import importlib
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
 
-from engines.gpt_sovits.runtime import configure_gpt_sovits_source
+from engines.gpt_sovits.runtime import GPTSovitsRuntimeContext, checkout_cwd, configure_gpt_sovits_source
 from utils.audio.cache import AudioCache, get_audio_cache
 from utils.device import resolve_torch_device
 from utils.text.character_parser import character_parser
@@ -38,12 +40,28 @@ class GPTSovitsAdapter:
         self._use_fp16 = False
         self._version = "v2"
         self.sample_rate = 32000
+        self._runtime_context: Optional[GPTSovitsRuntimeContext] = None
 
     def _import_official_runtime(self):
         """Import only the stable official library API, never the WebUI entrypoint."""
-        from TTS_infer_pack.TTS import TTS, TTS_Config
+        if self._runtime_context is None:
+            raise RuntimeError("GPT-SoVITS checkout root is required for official runtime imports")
+        tts_module = importlib.import_module("TTS_infer_pack.TTS")
+        sv_module = importlib.import_module("sv")
+        importlib.import_module("ERes2NetV2")
+        tts_module.now_dir = str(self._runtime_context.checkout_root)
+        sv_module.sv_path = str(self._runtime_context.sv_path)
+        return tts_module.TTS_Config, tts_module.TTS
 
-        return TTS_Config, TTS
+    @staticmethod
+    def _normalize_default_configs(runtime_config, context: GPTSovitsRuntimeContext) -> None:
+        for config in getattr(runtime_config, "default_configs", {}).values():
+            for key in (
+                "t2s_weights_path", "vits_weights_path", "bert_base_path", "cnhuhbert_base_path",
+            ):
+                path = config.get(key)
+                if path and not os.path.isabs(path):
+                    config[key] = str(context.checkout_root / path)
 
     def initialize_engine(
         self,
@@ -57,7 +75,9 @@ class GPTSovitsAdapter:
         gpt_sovits_home: Optional[str] = None,
         version: str = "v2",
     ) -> None:
-        configure_gpt_sovits_source(gpt_sovits_home)
+        context = configure_gpt_sovits_source(gpt_sovits_home)
+        if context is None:
+            raise RuntimeError("gpt_sovits_home or GPT_SOVITS_PATH must point to an official GPT-SoVITS checkout")
         resolved_device = resolve_torch_device(device)
         normalized_fp16 = bool(use_fp16) and resolved_device != "cpu"
 
@@ -71,12 +91,13 @@ class GPTSovitsAdapter:
             and self._device == resolved_device
             and self._use_fp16 == normalized_fp16
             and self._version == version
+            and self._runtime_context == context
         )
         if unchanged:
             return
 
         self.unload()
-        TTS_Config, TTS = self._import_official_runtime()
+        self._runtime_context = context
         custom_config = {
             "device": resolved_device,
             "is_half": normalized_fp16,
@@ -86,7 +107,10 @@ class GPTSovitsAdapter:
             "bert_base_path": bert_path,
             "cnhuhbert_base_path": cnhubert_path,
         }
-        self.runtime_config = TTS_Config({"custom": custom_config})
+        with checkout_cwd(context):
+            TTS_Config, TTS = self._import_official_runtime()
+            self.runtime_config = TTS_Config({"custom": custom_config})
+            self._normalize_default_configs(self.runtime_config, context)
         self.runtime = TTS(self.runtime_config)
         self._current_gpt_path = gpt_weight
         self._current_sovits_path = sovits_weight
@@ -222,6 +246,7 @@ class GPTSovitsAdapter:
         self.runtime_config = None
         self._current_gpt_path = None
         self._current_sovits_path = None
+        self._runtime_context = None
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
