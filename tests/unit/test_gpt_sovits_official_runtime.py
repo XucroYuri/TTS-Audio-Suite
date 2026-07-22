@@ -4,10 +4,35 @@ import os
 import sys
 
 import numpy as np
+import pytest
 import torch
 
 from engines.adapters.gpt_sovits_adapter import GPTSovitsAdapter
+from engines.gpt_sovits import runtime as runtime_module
 from utils.audio.cache import AudioCache
+
+
+_RUNTIME_MODULE_NAMES = ("TTS_infer_pack.TTS", "TTS_infer_pack", "sv", "ERes2NetV2")
+_MISSING_MODULE = object()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_gpt_sovits_runtime_state():
+    """Restore process-global checkout state even if a runtime assertion fails."""
+    previous_modules = {
+        module_name: sys.modules.get(module_name, _MISSING_MODULE)
+        for module_name in _RUNTIME_MODULE_NAMES
+    }
+    runtime_module.reset_gpt_sovits_checkout_for_tests()
+    try:
+        yield
+    finally:
+        runtime_module.reset_gpt_sovits_checkout_for_tests()
+        for module_name, previous_module in previous_modules.items():
+            if previous_module is _MISSING_MODULE:
+                sys.modules.pop(module_name, None)
+            else:
+                sys.modules[module_name] = previous_module
 
 
 def test_gpt_sovits_cache_key_covers_every_generation_input():
@@ -196,12 +221,16 @@ def test_official_import_is_bound_to_checkout_without_changing_caller_cwd(tmp_pa
         "        os.makedirs('GPT_SoVITS/configs', exist_ok=True)\n"
         "        self.config = config\n"
         "        self.sampling_rate = 32000\n"
+        "    def save_configs(self):\n"
+        "        with open(self.configs_path, 'w', encoding='utf-8') as f: f.write('saved')\n"
         "class TTS:\n"
-        "    def __init__(self, config): self.config = config\n",
+        "    def __init__(self, config):\n"
+        "        self.config = config\n"
+        "        config.save_configs()\n",
         encoding="utf-8",
     )
     caller_cwd = os.getcwd()
-    for module_name in ("TTS_infer_pack.TTS", "TTS_infer_pack", "sv", "ERes2NetV2"):
+    for module_name in _RUNTIME_MODULE_NAMES:
         sys.modules.pop(module_name, None)
 
     adapter = GPTSovitsAdapter()
@@ -217,4 +246,38 @@ def test_official_import_is_bound_to_checkout_without_changing_caller_cwd(tmp_pa
     assert sv_module.sv_path == str(checkout / "GPT_SoVITS" / "pretrained_models" / "sv" / "pretrained_eres2netv2w24s4ep4.ckpt")
     assert sys.modules["ERes2NetV2"].MARKER == "eres2net-ok"
     assert not Path(caller_cwd, "GPT_SoVITS", "configs").exists()
+    assert (checkout / "GPT_SoVITS" / "configs" / "tts_infer.yaml").read_text(encoding="utf-8") == "saved"
     assert adapter.runtime_config.default_configs["v2"]["t2s_weights_path"] == str(checkout / "GPT_SoVITS" / "pretrained_models" / "a.ckpt")
+
+
+def test_second_checkout_is_rejected_without_rewriting_first_modules(tmp_path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    for checkout in (first, second):
+        (checkout / "GPT_SoVITS" / "eres2net").mkdir(parents=True)
+
+    first_context = runtime_module.configure_gpt_sovits_source(str(first))
+    marker = object()
+    sys.modules["TTS_infer_pack.TTS"] = marker
+
+    with pytest.raises(RuntimeError, match="already bound"):
+        runtime_module.configure_gpt_sovits_source(str(second))
+
+    assert sys.modules["TTS_infer_pack.TTS"] is marker
+    assert first_context.checkout_root == first.resolve()
+
+
+def test_test_reset_removes_only_the_bound_checkout_import_paths(tmp_path):
+    checkout = tmp_path / "checkout"
+    package_root = checkout / "GPT_SoVITS"
+    eres2net_root = package_root / "eres2net"
+    eres2net_root.mkdir(parents=True)
+
+    runtime_module.configure_gpt_sovits_source(str(checkout))
+
+    injected_paths = {str(checkout), str(package_root), str(eres2net_root)}
+    assert injected_paths.issubset(sys.path)
+
+    runtime_module.reset_gpt_sovits_checkout_for_tests()
+
+    assert not injected_paths.intersection(sys.path)

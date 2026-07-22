@@ -110,6 +110,9 @@ class GPTSovitsAdapter:
         with checkout_cwd(context):
             TTS_Config, TTS = self._import_official_runtime()
             self.runtime_config = TTS_Config({"custom": custom_config})
+            config_path = context.package_root / "configs" / "tts_infer.yaml"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            self.runtime_config.configs_path = str(config_path)
             self._normalize_default_configs(self.runtime_config, context)
         self.runtime = TTS(self.runtime_config)
         self._current_gpt_path = gpt_weight
