@@ -21,16 +21,17 @@ class ExternalAudioAssetNode:
     CATEGORY = "TTS Audio Suite/API Bridge"
 
     def load_asset(self, asset_id: str, reference_text: str):
-        asset = get_audio_asset_store().require(asset_id)
-        waveform, sample_rate = load(str(asset.path))
-        if not hasattr(waveform, "unsqueeze"):
-            raise ValueError("ComfyUI audio loader returned an invalid waveform")
-        audio = {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
-        return (
-            {
+        with get_audio_asset_store().lease(asset_id) as asset:
+            waveform, sample_rate = load(str(asset.path))
+            if not hasattr(waveform, "unsqueeze"):
+                raise ValueError("ComfyUI audio loader returned an invalid waveform")
+            audio = {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
+            voice = {
                 "audio": audio,
                 "audio_path": str(asset.path),
                 "reference_text": reference_text,
                 "character_name": "external",
-            },
+            }
+        return (
+            voice,
         )
