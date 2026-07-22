@@ -1,0 +1,19 @@
+# Copy this file to the location named by TTS_AUDIO_SUITE_RESOURCES, then replace
+# the documentation-only paths below with directories and weights on this machine.
+version: 1
+resources:
+  local-gpt-sovits:
+    engine: gpt_sovits
+    source_root: C:/tts-resources/GPT-SoVITS
+    gpt_weight: C:/tts-resources/GPT-SoVITS/GPT_weights/voice.ckpt
+    sovits_weight: C:/tts-resources/GPT-SoVITS/SoVITS_weights/voice.pth
+    bert_path: C:/tts-resources/GPT-SoVITS/GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
+    cnhubert_path: C:/tts-resources/GPT-SoVITS/GPT_SoVITS/pretrained_models/chinese-hubert-base
+  local-index-tts:
+    engine: index_tts
+    source_root: C:/tts-resources/IndexTTS
+    model_dir: C:/tts-resources/IndexTTS/checkpoints
+  local-cosyvoice:
+    engine: cosyvoice
+    source_root: C:/tts-resources/CosyVoice
+    model_dir: C:/tts-resources/CosyVoice/pretrained_models/CosyVoice-300M
