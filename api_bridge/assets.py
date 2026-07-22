@@ -25,6 +25,12 @@ class AudioAsset:
     size_bytes: int
 
 
+@dataclass(frozen=True)
+class AudioAssetSnapshot:
+    asset: AudioAsset
+    content: bytes
+
+
 class AudioAssetStore:
     """Own uploaded reference audio under one generated-name-only directory."""
 
@@ -77,14 +83,12 @@ class AudioAssetStore:
             return self._require_unlocked(asset_id)
 
     @contextmanager
-    def lease(self, asset_id: str) -> Iterator[AudioAsset]:
-        """Keep a validated asset stable while a node reads it."""
+    def lease(self, asset_id: str) -> Iterator[AudioAssetSnapshot]:
+        """Provide a verified immutable byte snapshot for one node read."""
         with self._lock:
-            asset = self._require_unlocked(asset_id)
-            try:
-                yield asset
-            finally:
-                self._validate_registered_asset(asset)
+            asset = self._asset_unlocked(asset_id)
+            content = self._read_verified_content(asset)
+            yield AudioAssetSnapshot(asset=asset, content=content)
 
     def delete(self, asset_id: str) -> None:
         with self._lock:
@@ -97,10 +101,14 @@ class AudioAssetStore:
             del self._assets[asset_id]
 
     def _require_unlocked(self, asset_id: str) -> AudioAsset:
+        asset = self._asset_unlocked(asset_id)
+        self._read_verified_content(asset)
+        return asset
+
+    def _asset_unlocked(self, asset_id: str) -> AudioAsset:
         asset = self._assets.get(asset_id)
         if asset is None:
             raise ValueError(f"unknown asset_id: {asset_id}")
-        self._validate_registered_asset(asset)
         return asset
 
     def _destination(self, asset_id: str, suffix: str) -> Path:
@@ -115,23 +123,20 @@ class AudioAssetStore:
             raise ValueError("registered asset path is outside the managed root")
         return path
 
-    def _validate_registered_asset(self, asset: AudioAsset) -> None:
+    def _read_verified_content(self, asset: AudioAsset) -> bytes:
         try:
             path = self._registered_path(asset)
-            if not path.is_file() or path.stat().st_size != asset.size_bytes:
+            if not path.is_file():
                 raise ValueError("asset is missing or tampered")
-            if self._file_sha256(path) != asset.sha256:
+            with path.open("rb") as handle:
+                content = handle.read(self.max_bytes + 1)
+            if len(content) != asset.size_bytes or len(content) > self.max_bytes:
+                raise ValueError("asset is missing or tampered")
+            if hashlib.sha256(content).hexdigest() != asset.sha256:
                 raise ValueError("asset is missing or tampered")
         except (OSError, ValueError) as exc:
             raise ValueError("asset is missing or tampered") from exc
-
-    @staticmethod
-    def _file_sha256(path: Path) -> str:
-        digest = hashlib.sha256()
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
+        return content
 
     @staticmethod
     def _validate_audio(path: Path) -> None:
@@ -152,14 +157,10 @@ def get_audio_asset_store() -> AudioAssetStore:
     with _audio_asset_store_lock:
         if _audio_asset_store is not None:
             return _audio_asset_store
+        import folder_paths
 
-    import folder_paths
-
-    input_root = Path(folder_paths.get_input_directory()).resolve()
-    candidate = AudioAssetStore(input_root / "tts-audio-suite", owner_root=input_root)
-    with _audio_asset_store_lock:
-        if _audio_asset_store is None:
-            _audio_asset_store = candidate
+        input_root = Path(folder_paths.get_input_directory()).resolve()
+        _audio_asset_store = AudioAssetStore(input_root / "tts-audio-suite", owner_root=input_root)
         return _audio_asset_store
 
 

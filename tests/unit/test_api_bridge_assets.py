@@ -1,5 +1,6 @@
 import importlib.util
 import io
+from contextlib import contextmanager
 from pathlib import Path
 import sys
 import threading
@@ -135,7 +136,7 @@ def test_asset_store_rejects_missing_and_replaced_content_before_a_node_can_load
 
     asset = store.create("reference.wav", wav_bytes())
     module = _load_audio_node(monkeypatch, store)
-    monkeypatch.setattr(module, "load", lambda _: pytest.fail("tampered asset reached the audio loader"))
+    monkeypatch.setattr(module, "_load_snapshot", lambda _: pytest.fail("tampered asset reached the audio loader"))
     asset.path.write_bytes(wav_bytes(b"\x01\x00"))
 
     with pytest.raises(ValueError, match="missing or tampered"):
@@ -200,35 +201,84 @@ def test_default_store_concurrent_initialization_returns_one_instance(tmp_path: 
 
     monkeypatch.setattr(folder_paths, "get_input_directory", lambda: str(tmp_path))
     original_store = assets.AudioAssetStore
-    construction_barrier = threading.Barrier(4)
+    construction_entered = threading.Event()
+    release_construction = threading.Event()
+    construction_count = 0
+    construction_count_lock = threading.Lock()
 
     class BarrierStore(original_store):
         def __init__(self, *args, **kwargs):
-            construction_barrier.wait(timeout=5)
+            nonlocal construction_count
+            with construction_count_lock:
+                construction_count += 1
+            construction_entered.set()
+            assert release_construction.wait(timeout=5)
             super().__init__(*args, **kwargs)
 
     monkeypatch.setattr(assets, "AudioAssetStore", BarrierStore)
     reset_audio_asset_store_for_tests()
-    start_barrier = threading.Barrier(4)
     results = []
     results_lock = threading.Lock()
 
     def get_store():
-        start_barrier.wait(timeout=5)
         result = get_audio_asset_store()
         with results_lock:
             results.append(result)
 
-    threads = [threading.Thread(target=get_store) for _ in range(4)]
-    for thread in threads:
+    first_thread = threading.Thread(target=get_store)
+    first_thread.start()
+    assert construction_entered.wait(timeout=5)
+    threads = [first_thread, *(threading.Thread(target=get_store) for _ in range(3))]
+    for thread in threads[1:]:
         thread.start()
+    time.sleep(0.1)
+    observed_construction_count = construction_count
+    release_construction.set()
     for thread in threads:
         thread.join(timeout=5)
         assert not thread.is_alive()
 
     assert len(results) == 4
+    assert observed_construction_count == 1
     assert all(item is results[0] for item in results)
     reset_audio_asset_store_for_tests()
+
+
+@pytest.mark.unit
+def test_reset_cannot_be_undone_by_a_getter_already_constructing_a_store(tmp_path: Path, monkeypatch):
+    import api_bridge.assets as assets
+    import folder_paths
+
+    monkeypatch.setattr(folder_paths, "get_input_directory", lambda: str(tmp_path))
+    original_store = assets.AudioAssetStore
+    construction_entered = threading.Event()
+    release_construction = threading.Event()
+    reset_done = threading.Event()
+
+    class BlockingStore(original_store):
+        def __init__(self, *args, **kwargs):
+            construction_entered.set()
+            assert release_construction.wait(timeout=5)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(assets, "AudioAssetStore", BlockingStore)
+    reset_audio_asset_store_for_tests()
+    getter_thread = threading.Thread(target=get_audio_asset_store)
+    reset_thread = threading.Thread(target=lambda: (reset_audio_asset_store_for_tests(), reset_done.set()))
+    getter_thread.start()
+    assert construction_entered.wait(timeout=5)
+    reset_thread.start()
+    time.sleep(0.1)
+    reset_finished_while_constructing = reset_done.is_set()
+    release_construction.set()
+    getter_thread.join(timeout=5)
+    reset_thread.join(timeout=5)
+
+    assert not getter_thread.is_alive()
+    assert not reset_thread.is_alive()
+    assert not reset_finished_while_constructing
+    assert reset_done.is_set()
+    assert assets._audio_asset_store is None
 
 
 @pytest.mark.unit
@@ -249,20 +299,29 @@ def test_external_audio_asset_node_returns_a_decodable_narrator_voice(tmp_path: 
 
 
 @pytest.mark.unit
-def test_audio_asset_node_rejects_content_replaced_during_audio_load(tmp_path: Path, monkeypatch):
+def test_audio_asset_node_decodes_the_verified_snapshot_when_source_is_replaced_and_restored(
+    tmp_path: Path, monkeypatch
+):
     store = AudioAssetStore(tmp_path)
     asset = store.create("reference.wav", wav_bytes())
     module = _load_audio_node(monkeypatch, store)
+    original_content = asset.path.read_bytes()
+    original_lease = store.lease
 
-    def replace_during_load(path: str):
-        samples, sample_rate = soundfile.read(path, dtype="float32", always_2d=True)
-        Path(path).write_bytes(wav_bytes(b"\x01\x00"))
-        return torch.from_numpy(samples.T), sample_rate
+    @contextmanager
+    def replace_after_snapshot(asset_id: str):
+        with original_lease(asset_id) as snapshot:
+            asset.path.write_bytes(wav_bytes(b"\x01\x00"))
+            try:
+                yield snapshot
+            finally:
+                asset.path.write_bytes(original_content)
 
-    monkeypatch.setattr(module, "load", replace_during_load)
+    monkeypatch.setattr(store, "lease", replace_after_snapshot)
 
-    with pytest.raises(ValueError, match="missing or tampered"):
-        module.ExternalAudioAssetNode().load_asset(asset.asset_id, "参考文本")
+    (voice,) = module.ExternalAudioAssetNode().load_asset(asset.asset_id, "参考文本")
+
+    assert torch.count_nonzero(voice["audio"]["waveform"]) == 0
 
 
 @pytest.mark.unit
@@ -275,13 +334,13 @@ def test_audio_asset_delete_waits_for_an_active_node_load(tmp_path: Path, monkey
     loaded_voice = []
     delete_done = threading.Event()
 
-    def slow_load(path: str):
+    def slow_load(content: bytes):
         entered_load.set()
         assert release_load.wait(timeout=5)
-        samples, sample_rate = soundfile.read(path, dtype="float32", always_2d=True)
+        samples, sample_rate = soundfile.read(io.BytesIO(content), dtype="float32", always_2d=True)
         return torch.from_numpy(samples.T), sample_rate
 
-    monkeypatch.setattr(module, "load", slow_load)
+    monkeypatch.setattr(module, "_load_snapshot", slow_load)
     node_thread = threading.Thread(
         target=lambda: loaded_voice.append(module.ExternalAudioAssetNode().load_asset(asset.asset_id, "参考文本"))
     )
