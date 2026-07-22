@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import json
-from threading import RLock
+from threading import Event, RLock, Thread
 from types import SimpleNamespace
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+import pytest
+
+from api_bridge.assets import AssetInUseError
 
 from api_bridge.routes import (
     build_capabilities_payload,
     build_runtime_release_payload,
     is_asset_delete_blocked,
+    _delete_asset_while_idle,
     register_api_bridge_routes,
 )
 
@@ -373,3 +377,69 @@ def test_upload_rejects_non_multipart_and_malformed_multipart_without_a_500():
             await client.close()
 
     asyncio.run(run())
+
+
+def test_upload_moves_blocking_asset_creation_off_the_aiohttp_event_loop():
+    async def run():
+        entered = Event()
+        release = Event()
+
+        class SlowStore(AssetStore):
+            def create(self, filename, content):
+                entered.set()
+                assert release.wait(timeout=2)
+                return super().create(filename, content)
+
+        routes = web.RouteTableDef()
+        store = SlowStore()
+        register_api_bridge_routes(routes, plugin_version="test", asset_store_getter=lambda: store)
+        handler = next(item.handler for item in routes if item.path.endswith("/assets/audio") and item.method == "POST")
+        task = asyncio.create_task(handler(UploadRequest([UploadField("audio", "voice.wav", [b"1234"])])))
+
+        assert await asyncio.to_thread(entered.wait, 1)
+        for _ in range(3):
+            await asyncio.sleep(0)
+        assert not task.done()
+        release.set()
+        assert (await task).status == 201
+
+    asyncio.run(run())
+
+
+def test_delete_is_linearized_with_prompt_queue_mutex_before_a_worker_can_start():
+    entered_store = Event()
+    release_store = Event()
+    worker_started = Event()
+    queue = PromptQueue()
+    prompt_server = PromptServer(queue)
+
+    class BlockingStore(AssetStore):
+        def known(self, asset_id):
+            super().known(asset_id)
+            entered_store.set()
+            assert release_store.wait(timeout=2)
+
+    store = BlockingStore()
+    delete_thread = Thread(
+        target=lambda: _delete_asset_while_idle(store, "asset-id", prompt_server, RuntimeRegistry())
+    )
+    delete_thread.start()
+    assert entered_store.wait(timeout=2)
+
+    def start_worker():
+        with queue.mutex:
+            queue.currently_running[1] = "started"
+            worker_started.set()
+
+    worker = Thread(target=start_worker)
+    worker.start()
+    assert not worker_started.wait(timeout=0.1)
+    release_store.set()
+    delete_thread.join(timeout=2)
+    worker.join(timeout=2)
+    assert not delete_thread.is_alive()
+    assert worker_started.is_set()
+    assert store.deleted == ["asset-id"]
+
+    with pytest.raises(AssetInUseError):
+        _delete_asset_while_idle(store, "asset-id", prompt_server, RuntimeRegistry())
