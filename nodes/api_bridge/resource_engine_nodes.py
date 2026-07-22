@@ -11,6 +11,15 @@ def _engine_data(engine: str, adapter_class: str, resource_id: str, config: dict
     return ({"engine_type": engine, "adapter_class": adapter_class, "config": {"resource_id": resource_id, **config}},)
 
 
+def _cuda_kernel_option(value: str) -> bool | None:
+    """Translate the public three-state choice into the adapter contract."""
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    return None
+
+
 class ExternalGPTSovitsEngineNode:
     @classmethod
     def INPUT_TYPES(cls):
@@ -113,7 +122,7 @@ class ExternalIndexTTSEngineNode:
             "max_text_tokens_per_segment": max_text_tokens_per_segment, "interval_silence": interval_silence,
             "temperature": temperature, "top_p": top_p, "top_k": top_k, "do_sample": do_sample,
             "length_penalty": length_penalty, "num_beams": num_beams, "repetition_penalty": repetition_penalty,
-            "max_mel_tokens": max_mel_tokens, "use_cuda_kernel": use_cuda_kernel,
+            "max_mel_tokens": max_mel_tokens, "use_cuda_kernel": _cuda_kernel_option(use_cuda_kernel),
             "use_deepspeed": use_deepspeed, "use_torch_compile": use_torch_compile,
             "use_accel": use_accel, "low_vram": low_vram,
         })

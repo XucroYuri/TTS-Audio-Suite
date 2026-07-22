@@ -108,6 +108,19 @@ def test_non_gpt_bridge_config_uses_current_processor_contract(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("ui_value", "expected"),
+    [("auto", None), ("true", True), ("false", False)],
+)
+def test_index_bridge_normalizes_cuda_kernel_choice_for_the_processor(fake_registry, ui_value, expected):
+    (engine_data,) = bridge.ExternalIndexTTSEngineNode().create_engine(
+        "local-resource", use_cuda_kernel=ui_value
+    )
+
+    assert engine_data["config"]["use_cuda_kernel"] is expected
+
+
+@pytest.mark.unit
 def test_bridge_rejects_a_resource_for_the_wrong_engine():
     class WrongEngineRegistry:
         def require(self, resource_id: str, engine: str):
