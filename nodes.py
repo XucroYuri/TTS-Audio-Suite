@@ -98,6 +98,14 @@ except Exception as e:
     F5TTS_ENGINE_AVAILABLE = False
 
 try:
+    gpt_sovits_engine_module = load_node_module("gpt_sovits_engine_node", "engines/gpt_sovits_engine_node.py")
+    GPTSovitsEngineNode = gpt_sovits_engine_module.GPTSovitsEngineNode
+    GPT_SOVITS_ENGINE_AVAILABLE = True
+except Exception as e:
+    print(f"❌ GPT-SoVITS Engine failed: {e}")
+    GPT_SOVITS_ENGINE_AVAILABLE = False
+
+try:
     higgs_audio_engine_module = load_node_module("higgs_audio_engine_node", "engines/higgs_audio_engine_node.py")
     HiggsAudioEngineNode = higgs_audio_engine_module.HiggsAudioEngineNode
     HIGGS_AUDIO_ENGINE_AVAILABLE = True
@@ -621,6 +629,10 @@ if CHATTERBOX_ENGINE_AVAILABLE:
 if F5TTS_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["F5TTSEngineNode"] = F5TTSEngineNode
     NODE_DISPLAY_NAME_MAPPINGS["F5TTSEngineNode"] = "⚙️ F5 TTS Engine"
+
+if GPT_SOVITS_ENGINE_AVAILABLE:
+    NODE_CLASS_MAPPINGS["GPTSovitsEngineNode"] = GPTSovitsEngineNode
+    NODE_DISPLAY_NAME_MAPPINGS["GPTSovitsEngineNode"] = "⚙️ GPT-SoVITS Engine"
 
 if HIGGS_AUDIO_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["HiggsAudioEngineNode"] = HiggsAudioEngineNode
