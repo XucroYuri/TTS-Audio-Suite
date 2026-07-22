@@ -245,6 +245,14 @@ except Exception as e:
     print(f"❌ API Bridge Engine Nodes failed: {e}")
     API_BRIDGE_ENGINE_NODES_AVAILABLE = False
 
+try:
+    api_bridge_asset_module = load_node_module("api_bridge_audio_asset_node", "api_bridge/audio_asset_node.py")
+    ExternalAudioAssetNode = api_bridge_asset_module.ExternalAudioAssetNode
+    API_BRIDGE_AUDIO_ASSET_NODE_AVAILABLE = True
+except Exception as e:
+    print(f"❌ API Bridge Audio Asset Node failed: {e}")
+    API_BRIDGE_AUDIO_ASSET_NODE_AVAILABLE = False
+
 # IndexTTS-2 Emotion Options Node
 try:
     index_tts_emotion_options_module = load_node_module("index_tts_emotion_options_node", "engines/index_tts_emotion_options_node.py")
@@ -715,6 +723,10 @@ if API_BRIDGE_ENGINE_NODES_AVAILABLE:
     NODE_DISPLAY_NAME_MAPPINGS["TTSExternalIndexTTSEngine"] = "API IndexTTS Engine"
     NODE_CLASS_MAPPINGS["TTSExternalCosyVoiceEngine"] = ExternalCosyVoiceEngineNode
     NODE_DISPLAY_NAME_MAPPINGS["TTSExternalCosyVoiceEngine"] = "API CosyVoice Engine"
+
+if API_BRIDGE_AUDIO_ASSET_NODE_AVAILABLE:
+    NODE_CLASS_MAPPINGS["TTSExternalAudioAsset"] = ExternalAudioAssetNode
+    NODE_DISPLAY_NAME_MAPPINGS["TTSExternalAudioAsset"] = "API Reference Audio Asset"
 
 if INDEX_TTS_EMOTION_OPTIONS_AVAILABLE:
     NODE_CLASS_MAPPINGS["IndexTTSEmotionOptionsNode"] = IndexTTSEmotionOptionsNode
