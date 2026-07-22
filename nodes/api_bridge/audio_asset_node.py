@@ -28,6 +28,7 @@ class ExternalAudioAssetNode:
             waveform, sample_rate = _load_snapshot(snapshot.content)
             audio = {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
             voice = {
+                "asset_id": snapshot.asset.asset_id,
                 "audio": audio,
                 "audio_path": str(snapshot.asset.path),
                 "reference_text": reference_text,

@@ -12,7 +12,14 @@ import pytest
 import soundfile
 import torch
 
-from api_bridge.assets import AudioAssetStore, get_audio_asset_store, reset_audio_asset_store_for_tests
+from api_bridge.assets import (
+    AssetInUseError,
+    AssetQuotaError,
+    AudioAssetStore,
+    get_audio_asset_store,
+    pin_voice_asset,
+    reset_audio_asset_store_for_tests,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -123,6 +130,84 @@ def test_asset_store_delete_accepts_only_known_asset_ids(tmp_path: Path):
 
     with pytest.raises(ValueError, match="unknown asset_id"):
         store.delete("../../voice.wav")
+
+
+def test_asset_store_pin_prevents_delete_until_generation_releases_it(tmp_path: Path):
+    store = AudioAssetStore(tmp_path)
+    asset = store.create("reference.wav", wav_bytes())
+
+    with store.pin(asset.asset_id):
+        with pytest.raises(AssetInUseError, match="asset_in_use"):
+            store.delete(asset.asset_id)
+
+    store.delete(asset.asset_id)
+    assert not asset.path.exists()
+
+
+def test_voice_asset_pin_uses_only_the_external_asset_identity(tmp_path: Path):
+    store = AudioAssetStore(tmp_path)
+    asset = store.create("reference.wav", wav_bytes())
+    external_voice = {"asset_id": asset.asset_id, "audio_path": str(asset.path)}
+
+    with pin_voice_asset(external_voice, store=store):
+        with pytest.raises(AssetInUseError):
+            store.delete(asset.asset_id)
+
+    with pin_voice_asset({"audio_path": str(asset.path)}, store=store):
+        pass
+    store.delete(asset.asset_id)
+
+
+def test_asset_store_enforces_total_bytes_and_count_without_deleting_existing_assets(tmp_path: Path):
+    content = wav_bytes()
+    store = AudioAssetStore(tmp_path, max_total_bytes=len(content) * 2, max_assets=1)
+    first = store.create("first.wav", content)
+
+    with pytest.raises(AssetQuotaError, match="asset_quota_exceeded"):
+        store.create("second.wav", content)
+
+    assert store.require(first.asset_id).path.exists()
+    assert len(list(tmp_path.iterdir())) == 1
+
+
+def test_asset_store_serializes_concurrent_quota_checks(tmp_path: Path):
+    content = wav_bytes()
+    store = AudioAssetStore(tmp_path, max_total_bytes=len(content), max_assets=1)
+    barrier = threading.Barrier(3)
+    outcomes = []
+
+    def create(index: int):
+        barrier.wait()
+        try:
+            outcomes.append(("created", store.create(f"voice-{index}.wav", content).asset_id))
+        except AssetQuotaError:
+            outcomes.append(("quota", index))
+
+    workers = [threading.Thread(target=create, args=(index,)) for index in range(2)]
+    for worker in workers:
+        worker.start()
+    barrier.wait()
+    for worker in workers:
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+
+    assert sorted(kind for kind, _ in outcomes) == ["created", "quota"]
+
+
+def test_asset_store_rebuilds_managed_assets_after_restart_and_keeps_invalid_residual_deletable(tmp_path: Path):
+    store = AudioAssetStore(tmp_path)
+    created = store.create("reference.wav", wav_bytes())
+    invalid_id = "a" * 32
+    invalid_path = tmp_path / f"{invalid_id}.wav"
+    invalid_path.write_bytes(b"not audio")
+
+    rebuilt = AudioAssetStore(tmp_path)
+
+    assert rebuilt.require(created.asset_id).sha256 == created.sha256
+    with pytest.raises(ValueError, match="invalid audio"):
+        rebuilt.require(invalid_id)
+    rebuilt.delete(invalid_id)
+    assert not invalid_path.exists()
 
 
 @pytest.mark.unit
@@ -291,6 +376,7 @@ def test_external_audio_asset_node_returns_a_decodable_narrator_voice(tmp_path: 
 
     assert module.ExternalAudioAssetNode.RETURN_TYPES == ("NARRATOR_VOICE",)
     assert voice["reference_text"] == "参考文本"
+    assert voice["asset_id"] == asset.asset_id
     assert voice["audio_path"] == str(asset.path)
     assert voice["character_name"] == "external"
     assert voice["audio"]["sample_rate"] == 16000

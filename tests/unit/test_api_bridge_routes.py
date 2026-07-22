@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+from threading import RLock
 from types import SimpleNamespace
 
 from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
 
 from api_bridge.routes import (
     build_capabilities_payload,
@@ -37,11 +39,14 @@ class RuntimeRegistry:
 
 class PromptQueue:
     def __init__(self, pending=None, running=None):
-        self.pending = [] if pending is None else pending
+        self.queued = [] if pending is None else pending
         self.running = [] if running is None else running
+        self.mutex = RLock()
+        self.queue = self.queued
+        self.currently_running = {index: value for index, value in enumerate(self.running)}
 
     def get_current_queue(self):
-        return self.pending, self.running
+        return self.running, self.queued
 
 
 class PromptServer:
@@ -68,6 +73,8 @@ class AssetStore:
     def require(self, asset_id):
         if asset_id == "missing":
             raise ValueError("unknown asset_id")
+
+    known = require
 
 
 class UploadField:
@@ -115,7 +122,7 @@ def test_capabilities_payload_is_versioned_redacted_and_has_stable_nodes():
 
 
 def test_runtime_release_rejects_an_empty_or_unrecognized_payload():
-    for payload in ({}, {"unknown": True}, {"runtime_key": ""}, {"all": False}):
+    for payload in ({}, {"unknown": True}, {"runtime_key": ""}, {"all": False}, {"all": True, "resource_id": None}):
         try:
             build_runtime_release_payload(payload)
         except ValueError:
@@ -310,5 +317,59 @@ def test_registered_runtime_release_returns_error_or_success_without_exception_d
             assert response.status == expected_status
             assert json.loads(response.body) == report
             assert runtime_registry.calls == [{"runtime_key": None, "resource_id": None}]
+
+    asyncio.run(run())
+
+
+def test_runtime_release_errors_take_precedence_over_busy_entries():
+    async def run():
+        routes = web.RouteTableDef()
+        runtime_registry = RuntimeRegistry(
+            report={"released": [], "busy": [{"code": "runtime_busy"}], "errors": [{"code": "runtime_unload_failed"}]}
+        )
+        register_api_bridge_routes(routes, plugin_version="test", runtime_registry_getter=lambda: runtime_registry)
+        handler = next(item.handler for item in routes if item.path.endswith("/runtime/release"))
+
+        class Request:
+            async def json(self):
+                return {"all": True}
+
+        assert (await handler(Request())).status == 500
+
+    asyncio.run(run())
+
+
+def test_capabilities_and_runtime_status_disable_http_caching():
+    async def run():
+        routes = web.RouteTableDef()
+        register_api_bridge_routes(routes, plugin_version="test", registry_getter=Registry, runtime_registry_getter=RuntimeRegistry)
+        capabilities = next(item.handler for item in routes if item.path.endswith("/capabilities"))
+        status = next(item.handler for item in routes if item.path.endswith("/runtime/status"))
+
+        assert (await capabilities(SimpleNamespace())).headers["Cache-Control"] == "no-store"
+        assert (await status(SimpleNamespace())).headers["Cache-Control"] == "no-store"
+
+    asyncio.run(run())
+
+
+def test_upload_rejects_non_multipart_and_malformed_multipart_without_a_500():
+    async def run():
+        routes = web.RouteTableDef()
+        register_api_bridge_routes(routes, plugin_version="test", asset_store_getter=AssetStore)
+        app = web.Application()
+        app.add_routes(routes)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            json_response = await client.post("/api/tts-audio-suite/v1/assets/audio", json={"audio": "no"})
+            malformed_response = await client.post(
+                "/api/tts-audio-suite/v1/assets/audio",
+                data=b"--missing-boundary",
+                headers={"Content-Type": "multipart/form-data; boundary=real-boundary"},
+            )
+            assert json_response.status in {400, 415}
+            assert malformed_response.status in {400, 415}
+        finally:
+            await client.close()
 
     asyncio.run(run())

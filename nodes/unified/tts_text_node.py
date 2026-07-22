@@ -48,6 +48,7 @@ from utils.voice.multilingual_engine import MultilingualEngine
 from utils.config_sanitizer import ConfigSanitizer
 import comfy.model_management as model_management
 import folder_paths
+from api_bridge.assets import pin_voice_asset
 from api_bridge.runtime_registry import (
     RuntimeHandle,
     get_runtime_registry,
@@ -1493,7 +1494,7 @@ Back to the main narrator voice for the conclusion.""",
                         "GPT-SoVITS requires a reference audio file path. "
                         "Use Character Voices or narrator_voice; raw waveform inputs cannot be used directly."
                     )
-                with self._target_runtime_lease(engine_type, engine_instance):
+                with pin_voice_asset(opt_narrator), self._target_runtime_lease(engine_type, engine_instance):
                     audio_result, generation_info = engine_instance.process_text(
                         text=text,
                         speaker_audio={"audio_path": reference_path},
@@ -1508,7 +1509,7 @@ Back to the main narrator voice for the conclusion.""",
 
             elif engine_type == "index_tts":
                 # IndexTTS-2 uses processor pattern - call through processor with emotion support
-                with self._target_runtime_lease(engine_type, engine_instance):
+                with pin_voice_asset(opt_narrator), self._target_runtime_lease(engine_type, engine_instance):
                     audio_result, chunk_info = engine_instance.process_text(
                         text=text,
                         speaker_audio=audio_tensor,
@@ -2097,7 +2098,7 @@ Back to the main narrator voice for the conclusion.""",
 
             elif engine_type == "cosyvoice":
                 # CosyVoice3 uses wrapper pattern - call directly through wrapper
-                with self._target_runtime_lease(engine_type, engine_instance):
+                with pin_voice_asset(opt_narrator), self._target_runtime_lease(engine_type, engine_instance):
                     result = engine_instance.generate_tts_audio(
                         text=text,
                         char_audio=audio_tensor,

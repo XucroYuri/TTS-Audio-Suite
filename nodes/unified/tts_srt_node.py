@@ -39,6 +39,7 @@ from utils.voice.discovery import get_available_voices
 from utils.audio.processing import AudioProcessingUtils
 from utils.config_sanitizer import ConfigSanitizer
 import comfy.model_management as model_management
+from api_bridge.assets import pin_voice_asset
 from api_bridge.runtime_registry import (
     RuntimeHandle,
     get_runtime_registry,
@@ -1377,7 +1378,7 @@ Hello! This is unified SRT TTS with character switching.
                 }
 
                 # Use the processor's main entry point with IndexTTS-2 emotion control
-                with self._target_runtime_lease(engine_type, engine_instance):
+                with pin_voice_asset(opt_narrator), self._target_runtime_lease(engine_type, engine_instance):
                     result = engine_instance.processor.process_srt_content(
                         srt_content=srt_content,
                         voice_mapping=voice_mapping,
@@ -1585,7 +1586,7 @@ Hello! This is unified SRT TTS with character switching.
                 }
 
                 # Use the processor's main entry point
-                with self._target_runtime_lease(engine_type, engine_instance):
+                with pin_voice_asset(opt_narrator), self._target_runtime_lease(engine_type, engine_instance):
                     result = engine_instance.processor.process_srt_content(
                         srt_content=srt_content,
                         voice_mapping=voice_mapping,
