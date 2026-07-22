@@ -707,3 +707,5 @@ class IndexTTSProcessor:
         """Clean up resources"""
         if self.adapter:
             self.adapter.unload()
+
+    unload = cleanup

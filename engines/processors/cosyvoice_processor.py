@@ -547,3 +547,5 @@ class CosyVoiceProcessor:
         if self.adapter:
             self.adapter.unload()
             self.adapter = None
+
+    unload = cleanup

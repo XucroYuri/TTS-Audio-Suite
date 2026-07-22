@@ -46,6 +46,12 @@ from utils.voice.multilingual_engine import MultilingualEngine
 from utils.config_sanitizer import ConfigSanitizer
 import comfy.model_management as model_management
 import folder_paths
+from api_bridge.runtime_registry import (
+    RuntimeHandle,
+    get_runtime_registry,
+    make_cache_identity,
+    make_runtime_key,
+)
 
 # Global audio cache for unified TTS segments
 GLOBAL_AUDIO_CACHE = {}
@@ -131,6 +137,8 @@ Back to the main narrator voice for the conclusion.""",
     RETURN_NAMES = ("audio", "generation_info")
     FUNCTION = "generate_speech"
     CATEGORY = "TTS Audio Suite/🎤 Text to Speech"
+    _RUNTIME_OWNER = "text"
+    _TARGET_RUNTIME_ENGINES = frozenset({"gpt_sovits", "index_tts", "cosyvoice"})
 
     def __init__(self):
         super().__init__()
@@ -139,6 +147,53 @@ Back to the main narrator voice for the conclusion.""",
         self._current_adapter = None
         # Cache engine instances to prevent model reloading
         self._cached_engine_instances = {}
+
+    def _runtime_key(self, cache_key: str) -> str:
+        return make_runtime_key(self._RUNTIME_OWNER, cache_key)
+
+    def _register_target_runtime(
+        self,
+        cache_key: str,
+        engine_type: str,
+        config: Dict[str, Any],
+        resolved_device: str,
+        engine_instance: Any,
+    ) -> None:
+        """Make a target cache entry explicitly releasable by its exact owner."""
+        if engine_type not in self._TARGET_RUNTIME_ENGINES:
+            return
+        unload = getattr(engine_instance, "cleanup", None)
+        if not callable(unload):
+            unload = getattr(engine_instance, "unload", None)
+        if not callable(unload):
+            return
+
+        def release_instance() -> None:
+            try:
+                unload()
+            finally:
+                cached_data = self._cached_engine_instances.get(cache_key)
+                cached_instance = (
+                    cached_data.get("instance")
+                    if isinstance(cached_data, dict)
+                    else cached_data
+                )
+                if cached_instance is engine_instance:
+                    self._cached_engine_instances.pop(cache_key, None)
+
+        get_runtime_registry().register(
+            RuntimeHandle.create(
+                self._runtime_key(cache_key),
+                engine_type,
+                str(config.get("resource_id") or ""),
+                str(resolved_device),
+                release_instance,
+            )
+        )
+
+    def _release_target_runtime(self, cache_key: str, engine_type: str) -> None:
+        if engine_type in self._TARGET_RUNTIME_ENGINES:
+            get_runtime_registry().release(runtime_key=self._runtime_key(cache_key))
 
     def _create_proper_engine_node_instance(self, engine_data: Dict[str, Any]):
         """
@@ -281,7 +336,10 @@ Back to the main narrator voice for the conclusion.""",
                 stable_params['load_trt'] = config.get('load_trt', False)
                 stable_params['load_vllm'] = config.get('load_vllm', False)
 
-            cache_key = f"{engine_type}_{hashlib.md5(str(sorted(stable_params.items())).encode()).hexdigest()[:8]}"
+            if engine_type in self._TARGET_RUNTIME_ENGINES:
+                cache_key = make_cache_identity(engine_type, stable_params)
+            else:
+                cache_key = f"{engine_type}_{hashlib.md5(str(sorted(stable_params.items())).encode()).hexdigest()[:8]}"
             
             # Cache key now properly includes model name for correct differentiation
             
@@ -303,16 +361,20 @@ Back to the main narrator voice for the conclusion.""",
                             cached_instance.update_config(config.copy())  # Propagate to processor
                         else:
                             cached_instance.config = config.copy()  # Fallback for other engines
+                        if engine_type in self._TARGET_RUNTIME_ENGINES:
+                            get_runtime_registry().touch(self._runtime_key(cache_key))
                         print(f"🔄 Reusing cached {engine_type} engine instance (updated with new generation parameters)")
                         return cached_instance
                     else:
                         # Cache invalidated by model unloading, remove it
                         print(f"🗑️ Removing invalidated {engine_type} engine cache (models were unloaded)")
-                        del self._cached_engine_instances[cache_key]
+                        self._release_target_runtime(cache_key, engine_type)
+                        self._cached_engine_instances.pop(cache_key, None)
                 else:
                     # Old format (direct instance) - assume invalid and remove
                     print(f"🗑️ Removing old-format {engine_type} engine cache (upgrading to timestamped format)")
-                    del self._cached_engine_instances[cache_key]
+                    self._release_target_runtime(cache_key, engine_type)
+                    self._cached_engine_instances.pop(cache_key, None)
             
             # print(f"🔧 Creating new {engine_type} engine instance")
             
@@ -530,6 +592,7 @@ Back to the main narrator voice for the conclusion.""",
                     'instance': engine_instance,
                     'timestamp': time.time()
                 }
+                self._register_target_runtime(cache_key, engine_type, config, resolved_device, engine_instance)
                 return engine_instance
 
             elif engine_type == "index_tts":
@@ -544,6 +607,7 @@ Back to the main narrator voice for the conclusion.""",
                     'instance': engine_instance,
                     'timestamp': time.time()
                 }
+                self._register_target_runtime(cache_key, engine_type, config, resolved_device, engine_instance)
 
                 return engine_instance
             
@@ -773,6 +837,13 @@ Back to the main narrator voice for the conclusion.""",
                         if self.processor is None:
                             self.processor = CosyVoiceProcessor(self.config)
                         return self.processor
+
+                    def cleanup(self):
+                        if self.processor is not None:
+                            self.processor.cleanup()
+                            self.processor = None
+
+                    unload = cleanup
                     
                     def generate_tts_audio(self, text, char_audio, char_text, character="narrator", **params):
                         processor = self._ensure_processor()
@@ -830,6 +901,7 @@ Back to the main narrator voice for the conclusion.""",
                     'instance': engine_instance,
                     'timestamp': time.time()
                 }
+                self._register_target_runtime(cache_key, engine_type, config, resolved_device, engine_instance)
                 return engine_instance
 
             else:

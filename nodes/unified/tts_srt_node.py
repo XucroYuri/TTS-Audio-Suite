@@ -37,6 +37,12 @@ from utils.voice.discovery import get_available_voices
 from utils.audio.processing import AudioProcessingUtils
 from utils.config_sanitizer import ConfigSanitizer
 import comfy.model_management as model_management
+from api_bridge.runtime_registry import (
+    RuntimeHandle,
+    get_runtime_registry,
+    make_cache_identity,
+    make_runtime_key,
+)
 
 # AnyType for flexible input types (accepts any data type)
 class AnyType(str):
@@ -146,11 +152,60 @@ Hello! This is unified SRT TTS with character switching.
     RETURN_NAMES = ("audio", "generation_info", "timing_report", "Adjusted_SRT")
     FUNCTION = "generate_srt_speech"
     CATEGORY = "TTS Audio Suite/🎤 Text to Speech"
+    _RUNTIME_OWNER = "srt"
+    _TARGET_RUNTIME_ENGINES = frozenset({"index_tts", "cosyvoice"})
 
     def __init__(self):
         super().__init__()
         # Cache engine instances to prevent model reloading
         self._cached_engine_instances = {}
+
+    def _runtime_key(self, cache_key: str) -> str:
+        return make_runtime_key(self._RUNTIME_OWNER, cache_key)
+
+    def _register_target_runtime(
+        self,
+        cache_key: str,
+        engine_type: str,
+        config: Dict[str, Any],
+        resolved_device: str,
+        engine_instance: Any,
+    ) -> None:
+        """Register the precise SRT cache owner without exposing configuration."""
+        if engine_type not in self._TARGET_RUNTIME_ENGINES:
+            return
+        unload = getattr(engine_instance, "cleanup", None)
+        if not callable(unload):
+            unload = getattr(engine_instance, "unload", None)
+        if not callable(unload):
+            return
+
+        def release_instance() -> None:
+            try:
+                unload()
+            finally:
+                cached_data = self._cached_engine_instances.get(cache_key)
+                cached_instance = (
+                    cached_data.get("instance")
+                    if isinstance(cached_data, dict)
+                    else cached_data
+                )
+                if cached_instance is engine_instance:
+                    self._cached_engine_instances.pop(cache_key, None)
+
+        get_runtime_registry().register(
+            RuntimeHandle.create(
+                self._runtime_key(cache_key),
+                engine_type,
+                str(config.get("resource_id") or ""),
+                str(resolved_device),
+                release_instance,
+            )
+        )
+
+    def _release_target_runtime(self, cache_key: str, engine_type: str) -> None:
+        if engine_type in self._TARGET_RUNTIME_ENGINES:
+            get_runtime_registry().release(runtime_key=self._runtime_key(cache_key))
 
     def _create_proper_engine_node_instance(self, engine_data: Dict[str, Any]):
         """
@@ -274,7 +329,10 @@ Hello! This is unified SRT TTS with character switching.
                 stable_params['load_trt'] = config.get('load_trt', False)
                 stable_params['load_vllm'] = config.get('load_vllm', False)
 
-            cache_key = f"{engine_type}_{hashlib.md5(str(sorted(stable_params.items())).encode()).hexdigest()[:8]}"
+            if engine_type in self._TARGET_RUNTIME_ENGINES:
+                cache_key = make_cache_identity(engine_type, stable_params)
+            else:
+                cache_key = f"{engine_type}_{hashlib.md5(str(sorted(stable_params.items())).encode()).hexdigest()[:8]}"
             
             # Check if we have a cached instance with the same stable configuration
             if cache_key in self._cached_engine_instances:
@@ -295,16 +353,20 @@ Hello! This is unified SRT TTS with character switching.
                             cached_instance.update_config(config.copy())  # Propagate to processor
                         else:
                             cached_instance.config = config.copy()  # Fallback for other engines
+                        if engine_type in self._TARGET_RUNTIME_ENGINES:
+                            get_runtime_registry().touch(self._runtime_key(cache_key))
                         print(f"🔄 Reusing cached {engine_type} SRT engine instance (updated with new generation parameters)")
                         return cached_instance
                     else:
                         # Cache invalidated by model unloading, remove it
                         print(f"🗑️ Removing invalidated {engine_type} SRT engine cache (models were unloaded)")
-                        del self._cached_engine_instances[cache_key]
+                        self._release_target_runtime(cache_key, engine_type)
+                        self._cached_engine_instances.pop(cache_key, None)
                 else:
                     # Old format (direct instance) - assume invalid and remove
                     print(f"🗑️ Removing old-format {engine_type} SRT engine cache (upgrading to timestamped format)")
-                    del self._cached_engine_instances[cache_key]
+                    self._release_target_runtime(cache_key, engine_type)
+                    self._cached_engine_instances.pop(cache_key, None)
             
             # print(f"🔧 Creating new {engine_type} SRT engine instance")
             
@@ -493,6 +555,13 @@ Hello! This is unified SRT TTS with character switching.
                         self.config = new_config.copy()
                         self.processor.update_config(new_config)
 
+                    def cleanup(self):
+                        if self.processor is not None:
+                            self.processor.cleanup()
+                            self.processor = None
+
+                    unload = cleanup
+
                     def process_with_error_handling(self, func):
                         """Error handling wrapper to match node interface"""
                         try:
@@ -515,6 +584,7 @@ Hello! This is unified SRT TTS with character switching.
                     'instance': engine_instance,
                     'timestamp': time.time()
                 }
+                self._register_target_runtime(cache_key, engine_type, config, resolved_device, engine_instance)
                 return engine_instance
 
             elif engine_type == "echo_tts":
@@ -775,6 +845,13 @@ Hello! This is unified SRT TTS with character switching.
                         self.config = new_config.copy()
                         self.processor.update_config(new_config)
 
+                    def cleanup(self):
+                        if self.processor is not None:
+                            self.processor.cleanup()
+                            self.processor = None
+
+                    unload = cleanup
+
                     def process_with_error_handling(self, func):
                         """Error handling wrapper to match node interface"""
                         try:
@@ -804,6 +881,7 @@ Hello! This is unified SRT TTS with character switching.
                     'instance': engine_instance,
                     'timestamp': time.time()
                 }
+                self._register_target_runtime(cache_key, engine_type, config, resolved_device, engine_instance)
                 return engine_instance
 
             elif engine_type == "qwen3_tts":

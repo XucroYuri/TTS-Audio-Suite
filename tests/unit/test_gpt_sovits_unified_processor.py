@@ -3,6 +3,7 @@ import torch
 import importlib.util
 from pathlib import Path
 
+from api_bridge.runtime_registry import RuntimeRegistry
 from engines.processors.gpt_sovits_processor import GPTSovitsProcessor
 
 
@@ -145,3 +146,62 @@ def test_native_gpt_sovits_engine_node_is_registered():
     nodes_source = (Path(__file__).parents[2] / "nodes.py").read_text(encoding="utf-8")
 
     assert 'NODE_CLASS_MAPPINGS["GPTSovitsEngineNode"] = GPTSovitsEngineNode' in nodes_source
+
+
+def test_text_target_cache_registers_touches_and_releases_exact_gpt_runtime(monkeypatch):
+    node_path = Path(__file__).parents[2] / "nodes" / "unified" / "tts_text_node.py"
+    spec = importlib.util.spec_from_file_location("runtime_registry_text_test_node", node_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class FakeProcessor:
+        created = []
+
+        def __init__(self, config):
+            self.config = config.copy()
+            self.cleanup_calls = 0
+            FakeProcessor.created.append(self)
+
+        def update_config(self, config):
+            self.config = config.copy()
+
+        def cleanup(self):
+            self.cleanup_calls += 1
+
+    from engines.processors import gpt_sovits_processor
+    from utils.models import comfyui_model_wrapper
+
+    registry = RuntimeRegistry()
+    monkeypatch.setattr(module, "get_runtime_registry", lambda: registry)
+    monkeypatch.setattr(gpt_sovits_processor, "GPTSovitsProcessor", FakeProcessor)
+    monkeypatch.setattr(comfyui_model_wrapper, "is_engine_cache_valid", lambda _: True)
+
+    engine = {
+        "engine_type": "gpt_sovits",
+        "config": {
+            "resource_id": "gpt-main",
+            "device": "cpu",
+            "gpt_weight": r"J:\\private\\gpt.ckpt",
+            "sovits_weight": r"J:\\private\\sovits.pth",
+        },
+    }
+    node = module.UnifiedTTSTextNode()
+    first = node._create_proper_engine_node_instance(engine)
+    before_reuse = registry.status()[0]["last_used_at"]
+    second = node._create_proper_engine_node_instance(engine)
+
+    assert first is second
+    assert registry.status()[0]["runtime_key"].startswith("text:gpt_sovits_")
+    assert "private" not in registry.status()[0]["runtime_key"]
+    assert registry.status()[0]["last_used_at"] >= before_reuse
+
+    runtime_key = registry.status()[0]["runtime_key"]
+    registry.release(runtime_key=runtime_key)
+
+    assert first.cleanup_calls == 1
+    assert node._cached_engine_instances == {}
+
+    replacement = node._create_proper_engine_node_instance(engine)
+
+    assert replacement is not first
+    assert len(registry.status()) == 1
