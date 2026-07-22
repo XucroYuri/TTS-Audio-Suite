@@ -180,8 +180,10 @@ def parse_tagged_text(text: str) -> TaggedTextProfile:
                 pause_durations_by_anchor.get(word_count, 0.0) + control.duration
             )
 
-        # Keep neighboring words from collapsing together after tags are removed.
-        spoken_parts.append(" ")
+        # Keep neighboring words from collapsing together after tags are removed,
+        # but do not add a second leading space when a tag starts the source text.
+        if idx > 0:
+            spoken_parts.append(" ")
         idx = next_idx
         chunk_start = idx
 
