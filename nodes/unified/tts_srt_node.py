@@ -247,6 +247,24 @@ Hello! This is unified SRT TTS with character switching.
                 stable_params['dtype'] = config.get('dtype', 'auto')
                 stable_params['attention'] = config.get('attention', 'auto')
 
+            # IndexTTS load identity must include every adapter initialization input.
+            if engine_type == "index_tts":
+                cuda_kernel = config.get('use_cuda_kernel')
+                if cuda_kernel == "true":
+                    cuda_kernel = True
+                elif cuda_kernel == "false":
+                    cuda_kernel = False
+                elif cuda_kernel == "auto":
+                    cuda_kernel = None
+                stable_params['resource_id'] = config.get('resource_id')
+                stable_params['model_path'] = config.get('model_path')
+                stable_params['use_fp16'] = config.get('use_fp16', True)
+                stable_params['use_cuda_kernel'] = cuda_kernel
+                stable_params['use_deepspeed'] = config.get('use_deepspeed', False)
+                stable_params['use_torch_compile'] = config.get('use_torch_compile', False)
+                stable_params['use_accel'] = config.get('use_accel', False)
+                stable_params['low_vram'] = config.get('low_vram', False)
+
             # For CosyVoice, include actual model identity and load options in cache key.
             # RL and base variants share one folder but use different llm files, so
             # model_path selection must invalidate the cached engine instance.

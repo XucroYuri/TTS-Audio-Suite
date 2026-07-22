@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import sys
+import types
 
 import pytest
 
@@ -144,3 +145,143 @@ def test_external_engine_ids_are_registered_through_the_plugin_loader():
     assert module.NODE_CLASS_MAPPINGS["TTSExternalGPTSovitsEngine"] is module.ExternalGPTSovitsEngineNode
     assert module.NODE_CLASS_MAPPINGS["TTSExternalIndexTTSEngine"] is module.ExternalIndexTTSEngineNode
     assert module.NODE_CLASS_MAPPINGS["TTSExternalCosyVoiceEngine"] is module.ExternalCosyVoiceEngineNode
+
+
+def _load_unified_node(filename: str, module_name: str):
+    spec = importlib.util.spec_from_file_location(module_name, REPO_ROOT / "nodes" / "unified" / filename)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _force_cache_valid(monkeypatch):
+    from utils.models import comfyui_model_wrapper
+
+    monkeypatch.setattr(comfyui_model_wrapper, "is_engine_cache_valid", lambda _: True)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("changed_key", "changed_value"),
+    [("resource_id", "gpt-resource-b"), ("version", "v3")],
+)
+def test_text_cache_recreates_gpt_processor_when_resource_identity_changes(
+    monkeypatch, changed_key, changed_value
+):
+    module = _load_unified_node("tts_text_node.py", f"gpt_cache_key_test_{changed_key}")
+    _force_cache_valid(monkeypatch)
+    created = []
+
+    class FakeProcessor:
+        def __init__(self, config):
+            self.config = config
+            created.append(self)
+
+        def update_config(self, config):
+            self.config = config
+
+    import engines.processors.gpt_sovits_processor as processor_module
+
+    monkeypatch.setattr(processor_module, "GPTSovitsProcessor", FakeProcessor)
+    node = module.UnifiedTTSTextNode()
+    first = {
+        "engine_type": "gpt_sovits",
+        "config": {
+            "resource_id": "gpt-resource-a",
+            "version": "v2",
+            "gpt_weight": "gpt.ckpt",
+            "sovits_weight": "sovits.pth",
+            "gpt_sovits_home": "C:/gpt",
+        },
+    }
+    second = {"engine_type": "gpt_sovits", "config": dict(first["config"], **{changed_key: changed_value})}
+
+    assert node._create_proper_engine_node_instance(first) is not node._create_proper_engine_node_instance(second)
+    assert len(created) == 2
+
+
+_INDEX_LOAD_KEYS = [
+    ("resource_id", "index-resource-b"),
+    ("model_path", "C:/index-b"),
+    ("use_fp16", False),
+    ("use_cuda_kernel", True),
+    ("use_deepspeed", True),
+    ("use_torch_compile", True),
+    ("use_accel", True),
+    ("low_vram", True),
+]
+
+
+def _index_engine_data(changed_key=None, changed_value=None):
+    config = {
+        "resource_id": "index-resource-a",
+        "model_path": "C:/index-a",
+        "device": "cpu",
+        "use_fp16": True,
+        "use_cuda_kernel": None,
+        "use_deepspeed": False,
+        "use_torch_compile": False,
+        "use_accel": False,
+        "low_vram": False,
+    }
+    if changed_key is not None:
+        config[changed_key] = changed_value
+    return {"engine_type": "index_tts", "config": config}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(("changed_key", "changed_value"), _INDEX_LOAD_KEYS)
+def test_text_cache_recreates_index_processor_for_each_load_identity(
+    monkeypatch, changed_key, changed_value
+):
+    module = _load_unified_node("tts_text_node.py", f"index_text_cache_key_test_{changed_key}")
+    _force_cache_valid(monkeypatch)
+    created = []
+
+    class FakeProcessor:
+        def __init__(self, config):
+            self.config = config
+            created.append(self)
+
+        def update_config(self, config):
+            self.config = config
+
+    import engines.processors.index_tts_processor as processor_module
+
+    monkeypatch.setattr(processor_module, "IndexTTSProcessor", FakeProcessor)
+    node = module.UnifiedTTSTextNode()
+
+    assert node._create_proper_engine_node_instance(_index_engine_data()) is not node._create_proper_engine_node_instance(
+        _index_engine_data(changed_key, changed_value)
+    )
+    assert len(created) == 2
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(("changed_key", "changed_value"), _INDEX_LOAD_KEYS)
+def test_srt_cache_recreates_index_processor_for_each_load_identity(
+    monkeypatch, changed_key, changed_value
+):
+    module = _load_unified_node("tts_srt_node.py", f"index_srt_cache_key_test_{changed_key}")
+    _force_cache_valid(monkeypatch)
+    created = []
+
+    class FakeSRTProcessor:
+        def __init__(self, wrapper, config):
+            self.config = config
+            created.append(self)
+
+        def update_config(self, config):
+            self.config = config
+
+    fake_module = types.SimpleNamespace(IndexTTSSRTProcessor=FakeSRTProcessor)
+    fake_spec = types.SimpleNamespace(loader=types.SimpleNamespace(exec_module=lambda _: None))
+    monkeypatch.setattr(module.importlib.util, "spec_from_file_location", lambda *_: fake_spec)
+    monkeypatch.setattr(module.importlib.util, "module_from_spec", lambda _: fake_module)
+    node = module.UnifiedTTSSRTNode()
+
+    assert node._create_proper_engine_node_instance(_index_engine_data()) is not node._create_proper_engine_node_instance(
+        _index_engine_data(changed_key, changed_value)
+    )
+    assert len(created) == 2

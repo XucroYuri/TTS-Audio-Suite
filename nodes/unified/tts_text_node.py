@@ -243,16 +243,32 @@ Back to the main narrator voice for the conclusion.""",
                 stable_params['dtype'] = config.get('dtype', 'auto')
                 stable_params['attention'] = config.get('attention', 'auto')
 
-            # For IndexTTS-2, include low_vram in cache key since it requires model reload
+            # IndexTTS load identity must include every adapter initialization input.
             if engine_type == "index_tts":
+                cuda_kernel = config.get('use_cuda_kernel')
+                if cuda_kernel == "true":
+                    cuda_kernel = True
+                elif cuda_kernel == "false":
+                    cuda_kernel = False
+                elif cuda_kernel == "auto":
+                    cuda_kernel = None
+                stable_params['resource_id'] = config.get('resource_id')
+                stable_params['model_path'] = config.get('model_path')
+                stable_params['use_fp16'] = config.get('use_fp16', True)
+                stable_params['use_cuda_kernel'] = cuda_kernel
+                stable_params['use_deepspeed'] = config.get('use_deepspeed', False)
+                stable_params['use_torch_compile'] = config.get('use_torch_compile', False)
+                stable_params['use_accel'] = config.get('use_accel', False)
                 stable_params['low_vram'] = config.get('low_vram', False)
 
             if engine_type == "gpt_sovits":
+                stable_params['resource_id'] = config.get('resource_id')
                 stable_params['gpt_weight'] = config.get('gpt_weight')
                 stable_params['sovits_weight'] = config.get('sovits_weight')
                 stable_params['bert_path'] = config.get('bert_path')
                 stable_params['cnhubert_path'] = config.get('cnhubert_path')
                 stable_params['gpt_sovits_home'] = config.get('gpt_sovits_home')
+                stable_params['version'] = config.get('version', 'v2')
                 stable_params['use_fp16'] = config.get('use_fp16', True)
 
             # For CosyVoice, include actual model identity and load options in cache key.
