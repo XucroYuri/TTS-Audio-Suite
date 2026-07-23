@@ -1,6 +1,7 @@
 import { api } from "../../scripts/api.js";
 import { app } from "../../scripts/app.js";
 import { createCharacterVoiceTrimUI, hideNativeWidget } from "./character_voices_trim_ui.js";
+import { openCharacterAliasManager } from "./character_alias_manager_ui.js";
 
 function findWidget(node, name) {
     return node.widgets?.find((widget) => widget.name === name) || null;
@@ -261,9 +262,10 @@ function setupDomEditor(node) {
     const state = ensureState(node);
     if (typeof node.addDOMWidget !== "function") return false;
 
-    const editor = createCharacterVoiceTrimUI((start, end) => {
-        setTrimRange(node, start, end, true);
-    });
+    const editor = createCharacterVoiceTrimUI(
+        (start, end) => setTrimRange(node, start, end, true),
+        () => openCharacterAliasManager(),
+    );
     const audio = editor.audio;
     state.editor = editor;
 
@@ -329,6 +331,16 @@ function setupCharacterVoices(node) {
     const state = ensureState(node);
     if (!setupDomEditor(node)) setupFallbackPlayer(node);
     wrapWidgetCallbacks(node);
+
+    const originalGetExtraMenuOptions = node.getExtraMenuOptions;
+    node.getExtraMenuOptions = function (canvas, options) {
+        const result = originalGetExtraMenuOptions?.apply(this, arguments);
+        options.push(
+            null,
+            { content: "Manage character aliases…", callback: () => openCharacterAliasManager() },
+        );
+        return result;
+    };
 
     const originalOnConfigure = node.onConfigure?.bind(node);
     node.onConfigure = function (info) {

@@ -353,6 +353,9 @@ def setup_api_routes():
         def _get_omnivoice_preset_library_path():
             return os.path.join(_get_ui_data_dir(), "omnivoice_instruction_builder_presets.json")
 
+        from utils.voice.alias_api import register_character_alias_routes
+        register_character_alias_routes(PromptServer.instance.routes, web)
+
         @PromptServer.instance.routes.get("/api/tts-audio-suite/index-tts-emotion-presets")
         async def get_index_tts_emotion_presets_endpoint(request):
             """Return presets stored beside the IndexTTS resources under models/TTS."""
@@ -382,15 +385,9 @@ def setup_api_routes():
         async def get_available_characters_endpoint(request):
             """API endpoint to get available TTS character voices including aliases"""
             try:
-                # Load voice discovery directly by file path to avoid package import issues
-                voice_discovery_path = os.path.join(os.path.dirname(__file__), "utils", "voice", "discovery.py")
-                spec = importlib.util.spec_from_file_location("voice_discovery_module", voice_discovery_path)
-                voice_discovery_module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(voice_discovery_module)
-
+                from utils.voice import discovery as voice_discovery_module
                 characters = list(voice_discovery_module.get_available_characters())
-                # Also get character aliases
-                aliases = list(voice_discovery_module.voice_discovery._character_aliases.keys()) if hasattr(voice_discovery_module.voice_discovery, '_character_aliases') else []
+                aliases = list(voice_discovery_module.voice_discovery.get_character_aliases().keys())
                 # Combine and deduplicate
                 all_chars = sorted(set(characters + aliases))
                 return web.json_response({"characters": all_chars})
