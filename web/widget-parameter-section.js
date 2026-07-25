@@ -49,6 +49,15 @@ export function buildParameterSection(state, storageKey, getPlainText, setEditor
         <optgroup label="IndexTTS">
             <option value="emotion_alpha">Emotion Alpha</option>
         </optgroup>
+        <optgroup label="DramaBox">
+            <option value="stg_scale">STG Scale</option>
+            <option value="duration_multiplier">Duration Multiplier</option>
+            <option value="gen_duration">Generation Duration</option>
+            <option value="ref_duration">Reference Duration</option>
+            <option value="rescale_scale">Rescale Scale</option>
+            <option value="negative">Negative Prompt</option>
+            <option value="template">Prompt Template</option>
+        </optgroup>
     `;
 
     const paramInputWrapper = document.createElement("div");
@@ -63,7 +72,14 @@ export function buildParameterSection(state, storageKey, getPlainText, setEditor
         top_p: { type: "slider", min: 0.0, max: 1.0, step: 0.01, default: 0.95, label: "Top P" },
         top_k: { type: "number", min: 1, max: 100, step: 1, default: 50 },
         steps: { type: "number", min: 1, max: 100, step: 1, default: 30 },
-        emotion_alpha: { type: "slider", min: 0.0, max: 1.0, step: 0.05, default: 0.5, label: "Emotion" }
+        emotion_alpha: { type: "slider", min: 0.0, max: 1.0, step: 0.05, default: 0.5, label: "Emotion" },
+        stg_scale: { type: "slider", min: 0.0, max: 5.0, step: 0.1, default: 1.5, label: "STG" },
+        duration_multiplier: { type: "slider", min: 0.5, max: 3.0, step: 0.05, default: 1.1, label: "Duration" },
+        gen_duration: { type: "number", min: 0.0, max: 60.0, step: 0.5, default: 10.0 },
+        ref_duration: { type: "number", min: 3.0, max: 30.0, step: 0.5, default: 10.0 },
+        rescale_scale: { type: "text", default: "auto", placeholder: "auto or 0 to 1" },
+        negative: { type: "text", default: "noise, static, robotic", placeholder: "Sounds or qualities to discourage" },
+        template: { type: "text", default: 'A man speaks warmly, "{seg}"', placeholder: 'Example: A man speaks warmly, "{seg}"' }
     };
 
     const createParamInput = (type) => {
@@ -126,13 +142,20 @@ export function buildParameterSection(state, storageKey, getPlainText, setEditor
         } else {
             const input = document.createElement("input");
             input.type = "text";
-            input.placeholder = `${type} value`;
+            input.placeholder = config.placeholder || `${type} value`;
+            const stateKey = `last${type.charAt(0).toUpperCase() + type.slice(1)}`;
+            const savedValue = state[stateKey];
+            input.value = savedValue !== undefined ? savedValue : (config.default || "");
             input.style.width = "100%";
             input.style.padding = "3px";
             input.style.fontSize = "10px";
             input.style.background = "#2a2a2a";
             input.style.color = "#eee";
             input.style.border = "1px solid #444";
+            input.addEventListener("change", () => {
+                state[stateKey] = input.value;
+                state.saveToLocalStorage(storageKey);
+            });
             wrapper.appendChild(input);
             wrapper.getValue = () => input.value;
             return wrapper;

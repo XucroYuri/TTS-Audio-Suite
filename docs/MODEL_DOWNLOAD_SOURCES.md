@@ -38,7 +38,7 @@ Use this as the canonical list of model repositories/links for offline setup.
 
 | Component | Source | Size | Auto-Download | Notes |
 |---|---|---|---|---|
-| Official 23-Lang (v1/v2) | [ResembleAI/chatterbox](https://huggingface.co/ResembleAI/chatterbox) | ~4.3GB | ✅ | v1 + v2 files and tokenizer |
+| Official 23-Lang (v1/v2/v3) | [ResembleAI/chatterbox](https://huggingface.co/ResembleAI/chatterbox) | ~4.3GB | ✅ | v1 + v2 + v3 T3 checkpoints with shared tokenizer, voice encoder, and S3Gen |
 | Russian stress dictionary (Russian only) | [Vuizur/add-stress-to-epub release](https://github.com/Vuizur/add-stress-to-epub/releases/download/v1.0.1/russian_dict.zip) | ~1.5GB | ✅ | Auxiliary Official 23-Lang Russian stress-labeling data; downloads on demand only when Russian stress support is used |
 | Vietnamese (Viterbox) | [dolly-vn/viterbox](https://huggingface.co/dolly-vn/viterbox) | ~4.3GB | ✅ | Vietnamese community finetune used by downloader |
 | Egyptian Arabic (oddadmix) | [oddadmix/chatterbox-egyptian-v0](https://huggingface.co/oddadmix/chatterbox-egyptian-v0) | ~4.3GB | ✅ | Egyptian Arabic community finetune (architecture v2) |
@@ -128,6 +128,13 @@ Use this as the canonical list of model repositories/links for offline setup.
 | dots.tts-base | [rednote-hilab/dots.tts-base](https://huggingface.co/rednote-hilab/dots.tts-base) | ~6GB | ✅ | Official base checkpoint with tokenizer, vocoder, speaker encoder, and latent stats |
 | dots.tts-soar | [rednote-hilab/dots.tts-soar](https://huggingface.co/rednote-hilab/dots.tts-soar) | ~6GB | ✅ | Official SOAR checkpoint for higher-quality zero-shot cloning |
 | dots.tts-mf | [rednote-hilab/dots.tts-mf](https://huggingface.co/rednote-hilab/dots.tts-mf) | ~6GB | ✅ | Official MeanFlow-distilled checkpoint for faster inference |
+
+## DramaBox
+
+| Component | Source | Size | Auto-Download | Notes |
+|---|---|---|---|---|
+| DramaBox DiT + audio components | [ResembleAI/Dramabox](https://huggingface.co/ResembleAI/Dramabox) | ~8.5GB | ✅ | Official merged DramaBox transformer and LTX audio VAE/vocoder components |
+| Gemma 3 12B 4-bit text encoder | [unsloth/gemma-3-12b-it-bnb-4bit](https://huggingface.co/unsloth/gemma-3-12b-it-bnb-4bit) | ~7.8GB | ✅ | Official pre-quantized text encoder; loaded locally with no HF cache fallback |
 
 ## OmniVoice
 

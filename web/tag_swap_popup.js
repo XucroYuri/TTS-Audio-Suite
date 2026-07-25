@@ -9,6 +9,7 @@ const ENGINE_PARAMETERS = {
     step_audio_editx: ["seed", "temperature"],
     cosyvoice3: ["seed", "speed"],
     omnivoice: ["seed", "num_steps", "guidance_scale", "duration", "t_shift", "layer_penalty_factor", "position_temperature", "class_temperature", "audio_chunk_duration", "audio_chunk_threshold", "speed"],
+    dramabox: ["seed", "cfg", "stg_scale", "duration_multiplier", "gen_duration", "ref_duration", "rescale_scale", "negative", "template"],
 };
 const ALL_PARAMETERS = new Set(Object.values(ENGINE_PARAMETERS).flat());
 const VALUES = {
@@ -20,6 +21,11 @@ const VALUES = {
     top_k: ["10", "20", "30", "40", "50", "80"],
     steps: ["10", "20", "30", "40", "50", "75", "100"],
     emotion_alpha: ["0", "0.25", "0.5", "0.75", "1", "1.5", "2"],
+    stg_scale: ["0", "0.5", "1", "1.5", "2", "3", "5"],
+    duration_multiplier: ["0.75", "1", "1.1", "1.25", "1.5", "2"],
+    gen_duration: ["0", "3", "5", "10", "15", "20", "30", "45", "60"],
+    ref_duration: ["3", "5", "10", "15", "20", "30"],
+    rescale_scale: ["auto", "0", "0.1", "0.2", "0.3", "0.5", "0.75", "1"],
 };
 const options = values => (values || []).map(value => typeof value === "string"
     ? { value, label: value }

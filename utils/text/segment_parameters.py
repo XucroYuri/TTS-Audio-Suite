@@ -27,6 +27,19 @@ PARAMETER_ALIASES = {
     'cfg': 'cfg',
     'cfg_weight': 'cfg',  # cfg_weight alias -> cfg (more universal)
     'cfgweight': 'cfg',
+    'cfg_scale': 'cfg',
+    'stg': 'stg_scale',
+    'stg_scale': 'stg_scale',
+    'duration_multiplier': 'duration_multiplier',
+    'dur_mult': 'duration_multiplier',
+    'gen_duration': 'gen_duration',
+    'generation_duration': 'gen_duration',
+    'ref_duration': 'ref_duration',
+    'reference_duration': 'ref_duration',
+    'rescale': 'rescale_scale',
+    'rescale_scale': 'rescale_scale',
+    'prompt_template': 'prompt_template',
+    'template': 'prompt_template',
     'num_steps': 'num_steps',
     'num_step': 'num_steps',
     'guidance_scale': 'guidance_scale',
@@ -103,7 +116,7 @@ PARAMETER_ENGINES = {
         'chatterbox', 'chatterbox_official_23lang', 'f5tts', 'higgs_audio',
         'higgs_audio_v3', 'vibevoice', 'index_tts', 'step_audio_editx', 'cosyvoice', 'qwen3_tts',
         'dots_tts', 'fish_audio_s2', 'omnivoice',
-        'echo_tts', 'moss_tts', 'moss_soundeffect_v2'
+        'echo_tts', 'moss_tts', 'moss_soundeffect_v2', 'dramabox'
     },
     'temperature': {
         'chatterbox', 'chatterbox_official_23lang', 'f5tts', 'higgs_audio',
@@ -111,7 +124,25 @@ PARAMETER_ENGINES = {
     },
     'cfg': {
         'f5tts', 'vibevoice', 'index_tts', 'chatterbox', 'chatterbox_official_23lang',
-        'moss_soundeffect_v2'
+        'moss_soundeffect_v2', 'dramabox'
+    },
+    'stg_scale': {
+        'dramabox'
+    },
+    'duration_multiplier': {
+        'dramabox'
+    },
+    'gen_duration': {
+        'dramabox'
+    },
+    'ref_duration': {
+        'dramabox'
+    },
+    'rescale_scale': {
+        'dramabox'
+    },
+    'prompt_template': {
+        'dramabox'
     },
     'num_steps': {
         'echo_tts', 'dots_tts', 'omnivoice'
@@ -234,7 +265,7 @@ PARAMETER_ENGINES = {
         'moss_soundeffect_v2'
     },
     'negative_prompt': {
-        'moss_soundeffect_v2'
+        'moss_soundeffect_v2', 'dramabox'
     },
     'duration_seconds': {
         'moss_tts', 'moss_soundeffect_v2'
@@ -252,6 +283,12 @@ PARAMETER_VALIDATION = {
     'seed': (int, 0, 2**32 - 1, "Random seed for reproducible generation"),
     'temperature': (float, 0.1, 2.0, "Randomness/creativity control (lower=more deterministic)"),
     'cfg': (float, 0.0, 20.0, "Classifier-free guidance strength"),
+    'stg_scale': (float, 0.0, 5.0, "DramaBox skip-token guidance strength"),
+    'duration_multiplier': (float, 0.5, 3.0, "DramaBox estimated-duration multiplier"),
+    'gen_duration': (float, 0.0, 60.0, "DramaBox explicit output duration"),
+    'ref_duration': (float, 3.0, 30.0, "DramaBox reference-audio duration"),
+    'rescale_scale': (str, None, None, "DramaBox CFG rescale: auto or 0 to 1"),
+    'prompt_template': (str, None, None, "DramaBox per-segment prompt template using {seg}"),
     'num_steps': (int, 1, 200, "Number of inference steps"),
     'guidance_scale': (float, 0.0, 10.0, "Classifier-free guidance scale"),
     'duration': (float, 0.0, 600.0, "Fixed output duration in seconds"),
@@ -312,7 +349,14 @@ PARAMETER_NODE_KEYS = {
         'default': 'cfg_weight',
         'f5tts': 'cfg_strength',
         'moss_soundeffect_v2': 'cfg_scale',
+        'dramabox': 'cfg_scale',
     },  # Engine-specific mapping
+    'stg_scale': 'stg_scale',
+    'duration_multiplier': 'duration_multiplier',
+    'gen_duration': 'gen_duration',
+    'ref_duration': 'ref_duration',
+    'rescale_scale': 'rescale_scale',
+    'prompt_template': 'prompt_template',
     'num_steps': 'num_steps',
     'guidance_scale': 'guidance_scale',
     'duration': 'duration',
@@ -424,6 +468,15 @@ class ParameterValidator:
                     return False, f"{param_name} must be a non-empty string", value
             else:
                 converted = value
+
+            if param_name == 'rescale_scale':
+                normalized = str(converted).strip().lower()
+                if normalized == 'auto':
+                    converted = 'auto'
+                else:
+                    converted = float(normalized)
+                    if not 0.0 <= converted <= 1.0:
+                        return False, "rescale_scale must be 'auto' or between 0 and 1", value
 
             # Check bounds
             if min_val is not None and max_val is not None and (converted < min_val or converted > max_val):

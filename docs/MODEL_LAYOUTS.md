@@ -223,6 +223,31 @@ Notes:
 - Requires the main Transformers 5 environment.
 - Reference transcript `.txt` files are optional but improve cloning quality.
 
+## DramaBox
+
+```text
+ComfyUI/models/TTS/dramabox/
+└── DramaBox/
+    ├── dramabox-dit-v1.safetensors
+    ├── dramabox-audio-components.safetensors
+    ├── assets/
+    │   └── silence_latent_frame.pt
+    └── gemma-3-12b-it-bnb-4bit/
+        ├── config.json
+        ├── model-00001-of-00002.safetensors
+        ├── model-00002-of-00002.safetensors
+        ├── model.safetensors.index.json
+        └── tokenizer and processor files...
+```
+
+Notes:
+
+- Both repositories download directly into the organized suite folder.
+- Transformers is forced into local-only loading after download.
+- Requires NVIDIA CUDA. Fast mode targets approximately 24GB VRAM; experimental staged/sequential modes can run with less.
+- The LTX-2 Community License requires a paid license for entities with at
+  least USD 10 million in annual revenue.
+
 ## CosyVoice3
 
 ```text

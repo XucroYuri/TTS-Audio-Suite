@@ -269,7 +269,7 @@ engines:
 
   - id: chatterbox-23l
     name: ChatterBox 23L
-    models: "v1, v2, Vietnamese (Viterbox), Egyptian Arabic (oddadmix)"
+    models: "v1, v2, v3, Vietnamese (Viterbox), Egyptian Arabic (oddadmix)"
     size: "~4.3GB"
     license: "MIT"
     commercial: true
@@ -282,16 +282,19 @@ engines:
       training: false
 
     special_features:
-      - "24 languages in single model"
-      - "emotion tokens (v2 - doesn't work)"
+      - "V1, V2, and V3 official checkpoints"
+      - "Emotion tokens (v2; currently ineffective)"
+      - "V3 skips the legacy alignment analyzer and trims the final token artifact"
+    readme_key_features:
+      - "V1, V2, and V3 official checkpoints"
 
     model_sources:
-      - component: "Official 23-Lang (v1/v2)"
+      - component: "Official 23-Lang (v1/v2/v3)"
         source_name: "ResembleAI/chatterbox"
         source_url: "https://huggingface.co/ResembleAI/chatterbox"
         size: "~4.3GB"
         auto_download: true
-        notes: "v1 + v2 files and tokenizer"
+        notes: "v1 + v2 + v3 T3 checkpoints with shared tokenizer, voice encoder, and S3Gen"
       - component: "Russian stress dictionary (Russian only)"
         source_name: "Vuizur/add-stress-to-epub release"
         source_url: "https://github.com/Vuizur/add-stress-to-epub/releases/download/v1.0.1/russian_dict.zip"
@@ -555,6 +558,8 @@ engines:
       - "Native inline emotion/style/prosody/SFX tags"
       - "Zero-shot voice cloning"
       - "100+ language support"
+    readme_key_features:
+      - "Native inline emotion/style/prosody/SFX tags"
 
     model_sources:
       - component: "higgs-audio-v3-tts-4b"
@@ -959,9 +964,9 @@ engines:
       training: false
 
     special_features:
-      - "ASR (Automatic Speech Recognition)"
       - "Native speaker attribution / diarization (plus model variant)"
       - "Native word-level timestamps (plus model variant)"
+      - "ASR (Automatic Speech Recognition)"
       - "Custom timestamps/SRT via reused Qwen forced aligner"
       - "Speech translation (experimental)"
       - "Optional forced aligner auto-routed through shared legacy T4 runtime"
@@ -1208,8 +1213,8 @@ engines:
 
     special_features:
       - "Free-form sub-word emotion/prosody tags"
-      - "Zero-shot voice cloning and 80+ languages"
       - "Native multi-speaker and multi-turn dialogue with dynamic speaker references"
+      - "Zero-shot voice cloning"
       - "Optional per-segment custom character switching"
       - "Configurable 4K-32K native context with reduced KV-cache VRAM"
       - "Optional community FP8 weight-only checkpoint with BF16 activations"
@@ -1334,6 +1339,87 @@ engines:
       speed_performance: { supported: "partial", notes: "Moderate; mf variant is faster" }
       reference_free_tts: { supported: true, notes: "(default speaker)" }
 
+  - id: dramabox
+    name: DramaBox
+    models: "DramaBox 3.3B"
+    size: "~16.4GB"
+    license: "LTX-2 Community License"
+    commercial: conditional
+
+    capabilities:
+      tts: true
+      srt: true
+      vc: false
+      asr: false
+      training: false
+
+    special_features:
+      - "Expressive scene prompting and stage directions"
+      - "Native and SRT-aware duration targeting"
+      - "Official duration-aware long-form chunking with scene-prefix preservation"
+      - "Optional 10-second zero-shot voice reference"
+      - "CFG negative prompt with per-segment switching"
+      - "Explicit generation/reference durations, CFG rescale control, and optional Perth watermark"
+      - "Experimental staged and sequential strategies for lowering peak VRAM; official LTX FP8-cast storage"
+      - "Optional official torch.compile path"
+
+    model_sources:
+      - component: "DramaBox DiT + audio components"
+        source_name: "ResembleAI/Dramabox"
+        source_url: "https://huggingface.co/ResembleAI/Dramabox"
+        size: "~8.5GB"
+        auto_download: true
+        notes: "Official merged DramaBox transformer and LTX audio VAE/vocoder components"
+      - component: "Gemma 3 12B 4-bit text encoder"
+        source_name: "unsloth/gemma-3-12b-it-bnb-4bit"
+        source_url: "https://huggingface.co/unsloth/gemma-3-12b-it-bnb-4bit"
+        size: "~7.8GB"
+        auto_download: true
+        notes: "Official pre-quantized text encoder; loaded locally with no HF cache fallback"
+
+    languages:
+      en: { supported: true, flag: "🇺🇸", notes: "Official model is English-only" }
+      zh: { supported: false, flag: "🇨🇳", notes: "" }
+      de: { supported: false, flag: "🇩🇪", notes: "" }
+      es: { supported: false, flag: "🇪🇸", notes: "" }
+      fr: { supported: false, flag: "🇫🇷", notes: "" }
+      it: { supported: false, flag: "🇮🇹", notes: "" }
+      ja: { supported: false, flag: "🇯🇵", notes: "" }
+      ko: { supported: false, flag: "🇰🇷", notes: "" }
+      ru: { supported: false, flag: "🇷🇺", notes: "" }
+      pt: { supported: false, flag: "🇵🇹", notes: "" }
+      pl: { supported: false, flag: "🇵🇱", notes: "" }
+      hi: { supported: false, flag: "🇮🇳", notes: "" }
+      ar: { supported: false, flag: "🇦🇪", notes: "" }
+      tr: { supported: false, flag: "🇹🇷", notes: "" }
+      th: { supported: false, flag: "🇹🇭", notes: "" }
+      no: { supported: false, flag: "🇳🇴", notes: "" }
+      vi: { supported: false, flag: "🇻🇳", notes: "" }
+      hy: { supported: false, flag: "🇦🇲", notes: "" }
+      ka: { supported: false, flag: "🇬🇪", notes: "" }
+      da: { supported: false, flag: "🇩🇰", notes: "" }
+      fi: { supported: false, flag: "🇫🇮", notes: "" }
+      el: { supported: false, flag: "🇬🇷", notes: "" }
+      he: { supported: false, flag: "🇮🇱", notes: "" }
+      ms: { supported: false, flag: "🇲🇾", notes: "" }
+      nl: { supported: false, flag: "🇳🇱", notes: "" }
+      sv: { supported: false, flag: "🇸🇪", notes: "" }
+      sw: { supported: false, flag: "🇰🇪", notes: "" }
+
+    features:
+      voice_cloning: { supported: true, notes: "Optional reference audio; configurable 3-30 second window from the beginning of the source, default 10 seconds" }
+      reference_transcript: { requirement: not_used }
+      native_multi_speaker: { supported: false, notes: "Suite character switching generates speakers as separate segments" }
+      voice_conversion: { supported: false, notes: "" }
+      asr_transcribe: { supported: false, notes: "" }
+      emotion_control: { supported: true, notes: "Natural-language scene prompt and stage directions" }
+      native_long_form: { supported: true, notes: "Official duration-aware quote-group chunking; ~37s target / 45s cap" }
+      native_srt_duration_targeting: { supported: true, notes: "Subtitle duration is passed as gen_duration before the selected SRT timing mode applies final correction" }
+      community_finetunes: { supported: false, notes: "Not integrated" }
+      vram_efficient: { supported: true, notes: "Fast mode is ~24GB; experimental FP8 peaks on RTX 4090: staged ~15.1GB allocated, sequential ~11.7GB allocated / ~12.4GB reserved" }
+      speed_performance: { supported: "partial", notes: "Fast favors repeated generation; staged reloads temporary components; sequential also transfers the transformer; optional block-level torch.compile accelerates repeat denoising" }
+      reference_free_tts: { supported: true, notes: "Voice reference is optional" }
+
   - id: omnivoice
     name: OmniVoice
     models: "OmniVoice"
@@ -1352,10 +1438,10 @@ engines:
       training: false
 
     special_features:
-      - "600+ language support"
-      - "Explicit TTS/Voice Design modes with unified-node voice instruction"
-      - "Upstream long-form chunk orchestration"
       - "Inline non-verbal tags and pronunciation overrides"
+      - "Reference-free voice design"
+      - "600+ language support"
+      - "Upstream long-form chunk orchestration"
 
     model_sources:
       - component: "OmniVoice"
@@ -1424,11 +1510,11 @@ engines:
       training: true
 
     special_features:
-      - "31-language generation with MOSS-TTS-v1.5"
       - "Reference-free voice design with MOSS-VoiceGenerator"
+      - "Native 1-5 speaker TTSD dialogue"
+      - "31-language generation with MOSS-TTS-v1.5"
       - "Prompt-only sound-effect generation with MOSS-SoundEffect v1"
       - "Long-form generation (TTSD/Delay)"
-      - "Native 1-5 speaker TTSD dialogue"
       - "Duration token hint"
       - "Local/Delay/TTSD variants"
       - "Initial integrated LoRA training workflow (Delay 8B)"
@@ -1542,11 +1628,11 @@ engines:
       notes: "Runs in the configured ComfyUI environment; the bundled official inference pipeline works with the installed Transformers 5 and Diffusers stack, with a small dtype compatibility patch."
 
     special_features:
+      - "Durations up to 30 seconds"
+      - "Native negative prompting, CFG, flow shift, and diffusion-step controls"
       - "Prompt-only text-to-sound generation"
       - "48 kHz mono output"
-      - "Durations up to 30 seconds"
       - "Seeded generation"
-      - "Native negative prompting, CFG, flow shift, and diffusion-step controls"
 
     model_sources:
       - component: "MOSS-SoundEffect-v2.0"
@@ -1837,7 +1923,7 @@ readme_model_download_table:
   - engine: "ChatterBox 23-Lang"
     primary_model_path: "ComfyUI/models/TTS/chatterbox_official_23lang/"
     auto_download: "✅"
-    notes: "v1/v2 coexist in same folder"
+    notes: "v1/v2/v3 coexist in same folder"
   - engine: "F5-TTS"
     primary_model_path: "ComfyUI/models/TTS/F5-TTS/"
     auto_download: "✅"
@@ -1894,6 +1980,10 @@ readme_model_download_table:
     primary_model_path: "ComfyUI/models/TTS/dots_tts/"
     auto_download: "✅"
     notes: "Official base / soar / mf checkpoints with tokenizer, vocoder, speaker encoder"
+  - engine: "DramaBox"
+    primary_model_path: "ComfyUI/models/TTS/dramabox/DramaBox/"
+    auto_download: "✅"
+    notes: "~16.4GB download; fast mode roughly 24GB VRAM; experimental FP8 peaks on RTX 4090: staged ~15.1GB allocated, sequential ~11.7GB allocated / ~12.4GB reserved; conditional LTX-2 Community License"
   - engine: "Fish Audio S2 Pro"
     primary_model_path: "ComfyUI/models/TTS/fish_audio_s2_pro/"
     auto_download: "✅"
@@ -2128,6 +2218,31 @@ model_layouts_markdown: |
   - Downloads into its own `higgs_audio_v3` folder.
   - Requires the main Transformers 5 environment.
   - Reference transcript `.txt` files are optional but improve cloning quality.
+
+  ## DramaBox
+
+  ```text
+  ComfyUI/models/TTS/dramabox/
+  └── DramaBox/
+      ├── dramabox-dit-v1.safetensors
+      ├── dramabox-audio-components.safetensors
+      ├── assets/
+      │   └── silence_latent_frame.pt
+      └── gemma-3-12b-it-bnb-4bit/
+          ├── config.json
+          ├── model-00001-of-00002.safetensors
+          ├── model-00002-of-00002.safetensors
+          ├── model.safetensors.index.json
+          └── tokenizer and processor files...
+  ```
+
+  Notes:
+
+  - Both repositories download directly into the organized suite folder.
+  - Transformers is forced into local-only loading after download.
+  - Requires NVIDIA CUDA. Fast mode targets approximately 24GB VRAM; experimental staged/sequential modes can run with less.
+  - The LTX-2 Community License requires a paid license for entities with at
+    least USD 10 million in annual revenue.
 
   ## CosyVoice3
   

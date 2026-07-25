@@ -25,12 +25,12 @@
 
 ## Engines
 
-15 engines follow the pattern above:
+19 engines follow the pattern above:
 
 | Engine | Adapter | Processor | SRT Processor | Engine Node |
 |--------|---------|-----------|---------------|-------------|
 | ChatterBox | `chatterbox_adapter.py` | `nodes/chatterbox/chatterbox_tts_node.py` | `chatterbox_srt_node.py` | `chatterbox_engine_node.py` |
-| ChatterBox 23-Lang | `chatterbox_streaming_adapter.py` | `nodes/chatterbox_official_23lang/` | same folder | `chatterbox_engine_node.py` |
+| ChatterBox 23-Lang | `chatterbox_official_23lang_adapter.py` | `nodes/chatterbox_official_23lang/` | same folder | `chatterbox_official_23lang_engine_node.py` |
 | F5-TTS | `f5tts_adapter.py` | `nodes/f5tts/f5tts_node.py` | `f5tts_srt_node.py` | `f5tts_engine_node.py` |
 | Higgs Audio 2 | `higgs_audio_adapter.py` | — | `nodes/higgs_audio/higgs_audio_srt_processor.py` | `higgs_audio_engine_node.py` |
 | Higgs Audio v3 | `higgs_audio_v3_adapter.py` | `nodes/higgs_audio_v3/higgs_audio_v3_processor.py` | `higgs_audio_v3_srt_processor.py` | `higgs_audio_v3_engine_node.py` |
@@ -42,11 +42,15 @@
 | MOSS-TTS | `moss_tts_adapter.py` | `nodes/moss_tts/moss_tts_processor.py` | `moss_tts_srt_processor.py` | `moss_tts_engine_node.py` |
 | Granite ASR | `asr_granite_adapter.py` | — | — | `granite_asr_engine_node.py` |
 | Echo-TTS | `echo_tts_adapter.py` | `nodes/echo_tts/echo_tts_processor.py` | `echo_tts_srt_processor.py` | `echo_tts_engine_node.py` |
+| Fish Audio S2 Pro | `fish_audio_s2_adapter.py` | `nodes/fish_audio_s2/fish_audio_s2_processor.py` | `fish_audio_s2_srt_processor.py` | `fish_audio_s2_engine_node.py` |
+| Dots TTS | `dots_tts_adapter.py` | `nodes/dots_tts/dots_tts_processor.py` | `dots_tts_srt_processor.py` | `dots_tts_engine_node.py` |
+| DramaBox | `dramabox_adapter.py` | `nodes/dramabox/dramabox_processor.py` | `dramabox_srt_processor.py` | `dramabox_engine_node.py` |
 | OmniVoice | `omnivoice_adapter.py` | `nodes/omnivoice/omnivoice_processor.py` | `omnivoice_srt_processor.py` | `omnivoice_engine_node.py` |
+| MOSS-SoundEffect v2 | `moss_soundeffect_v2_adapter.py` | — | — | `moss_soundeffect_v2_engine_node.py` |
 | RVC | — | `engines/rvc/` | — | `rvc_engine_node.py` |
 
 **Engine implementations live in:**
-- `engines/chatterbox/`, `engines/chatterbox_official_23lang/`, `engines/f5tts/`, `engines/higgs_audio/`, `engines/higgs_audio_v3/`, `engines/vibevoice_engine/`, `engines/step_audio_editx/`, `engines/cosyvoice/`, `engines/qwen3_tts/`, `engines/qwen3_asr/`, `engines/moss_tts/`, `engines/granite_asr/`, `engines/echo_tts/`, `engines/omnivoice/`, `engines/rvc/`
+- `engines/chatterbox/`, `engines/chatterbox_official_23lang/`, `engines/f5tts/`, `engines/higgs_audio/`, `engines/higgs_audio_v3/`, `engines/vibevoice_engine/`, `engines/step_audio_editx/`, `engines/cosyvoice/`, `engines/qwen3_tts/`, `engines/qwen3_asr/`, `engines/moss_tts/`, `engines/moss_soundeffect_v2/`, `engines/granite_asr/`, `engines/echo_tts/`, `engines/fish_audio_s2/`, `engines/dots_tts/`, `engines/dramabox/`, `engines/omnivoice/`, `engines/rvc/`
 
 ## Documentation Files
 
@@ -62,6 +66,7 @@
 - `HIGGS_AUDIO_V3_INLINE_TAGS.md` - Higgs Audio v3 native paralinguistic tags
 - `OMNIVOICE_TAGS_GUIDE.md` - OmniVoice native non-verbal tags and pronunciation overrides
 - `MOSS_TTS_PROMPT_FIELDS_GUIDE.md` - Official MOSS whole-segment prompt fields and inline `<>` translation limits
+- `DRAMABOX_PROMPTING_GUIDE.md` - DramaBox expressive scene prompts, voice references, controls, hardware, and license
 - `COSYVOICE3_TAGS_GUIDE.md` - CosyVoice3 native paralinguistic tags
 - `CHATTERBOX_V2_SPECIAL_TOKENS.md` - ChatterBox v2 emotion tokens
 - `IndexTTS2_Emotion_Control_Guide.md` - IndexTTS-2 vector, text, audio, and blended emotion controls

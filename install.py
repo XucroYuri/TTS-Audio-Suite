@@ -48,6 +48,7 @@ class TTSAudioInstaller:
         ("Echo-TTS", ("echo_tts",)),
         ("OmniVoice", ("omnivoice",)),
         ("Dots TTS", ("dots_tts.runtime",)),
+        ("DramaBox", ("av", "einops", "yaml")),
         ("Fish Audio S2", ("fish_speech.inference_engine",)),
     )
     
