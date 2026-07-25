@@ -1,5 +1,10 @@
 import { app } from "../../scripts/app.js";
-import { loadCharacterAliases, resetCharacterAliases, saveCharacterAliases } from "./character_alias_manager_api.js";
+import {
+    characterPreviewUrl,
+    loadCharacterAliases,
+    resetCharacterAliases,
+    saveCharacterAliases,
+} from "./character_alias_manager_api.js";
 import { ensureCharacterAliasManagerStyles } from "./character_alias_manager_styles.js";
 
 const THEME_KEY = "ttsAudioSuite.characterAliasManager.theme";
@@ -63,6 +68,9 @@ function makeButton(label, className = "") {
 
 function setPayload(state, payload) {
     state.characters = Array.isArray(payload.characters) ? payload.characters : [];
+    state.characterDetails = new Map(
+        Object.entries(payload.characterDetails || {}).map(([name, details]) => [aliasKey(name), details]),
+    );
     state.languages = Array.isArray(payload.languages) ? payload.languages : [];
     state.inheritedRows = (payload.inheritedAliases || []).map(cloneRecord);
     state.userGroups = (payload.userGroups || []).map(group => ({
@@ -89,6 +97,49 @@ function setPayload(state, payload) {
     state.userFile = payload.userFile || "";
 }
 
+function stopPreview(state) {
+    if (state.previewAudio) {
+        state.previewAudio.pause();
+        state.previewAudio.removeAttribute("src");
+        state.previewAudio.load();
+    }
+    state.previewAudio = null;
+    state.previewRowId = null;
+}
+
+function togglePreview(state, row, render) {
+    if (!aliasKey(row.target)) return;
+    state.error = "";
+    if (state.previewRowId === row.id) {
+        stopPreview(state);
+        render();
+        return;
+    }
+
+    stopPreview(state);
+    const audio = new Audio(characterPreviewUrl(row.target));
+    state.previewAudio = audio;
+    state.previewRowId = row.id;
+    audio.addEventListener("ended", () => {
+        if (state.previewAudio !== audio) return;
+        stopPreview(state);
+        render();
+    }, { once: true });
+    audio.addEventListener("error", () => {
+        if (state.previewAudio !== audio) return;
+        stopPreview(state);
+        state.error = `Could not preview character voice: ${row.target}`;
+        render();
+    }, { once: true });
+    render();
+    audio.play().catch(error => {
+        if (state.previewAudio !== audio) return;
+        stopPreview(state);
+        state.error = `Could not preview character voice: ${error.message}`;
+        render();
+    });
+}
+
 function moveUserRow(state, rowId, groupId, beforeRowId = null) {
     const index = state.userRows.findIndex(row => row.id === rowId);
     if (index < 0) return;
@@ -102,6 +153,23 @@ function moveUserRow(state, rowId, groupId, beforeRowId = null) {
         const insertAt = groupRows.length ? groupRows.at(-1).itemIndex + 1 : state.userRows.length;
         state.userRows.splice(insertAt, 0, row);
     }
+}
+
+function clearDragFeedback() {
+    activeOverlay?.querySelectorAll(".drag-over-before, .drag-over-after, .drag-over-group")
+        .forEach(element => element.classList.remove("drag-over-before", "drag-over-after", "drag-over-group"));
+}
+
+function makeRowDragImage(element, event) {
+    const ghost = element.cloneNode(true);
+    const bounds = element.getBoundingClientRect();
+    ghost.classList.remove("dragging");
+    ghost.classList.add("tts-alias-drag-ghost");
+    ghost.style.width = `${bounds.width}px`;
+    ghost.style.height = `${bounds.height}px`;
+    (activeOverlay?.querySelector(".tts-alias-sheet") || document.body).appendChild(ghost);
+    event.dataTransfer.setDragImage(ghost, Math.min(24, event.offsetX), bounds.height / 2);
+    requestAnimationFrame(() => ghost.remove());
 }
 
 function createSelect(values, value, placeholder) {
@@ -140,17 +208,38 @@ function createRow(state, row, render) {
         grip.addEventListener("dragstart", event => {
             event.dataTransfer.effectAllowed = "move";
             event.dataTransfer.setData("text/x-tts-alias-row", String(row.id));
+            makeRowDragImage(element, event);
             element.classList.add("dragging");
         });
-        grip.addEventListener("dragend", () => element.classList.remove("dragging"));
+        grip.addEventListener("dragend", () => {
+            element.classList.remove("dragging");
+            clearDragFeedback();
+        });
         element.addEventListener("dragover", event => {
-            if (event.dataTransfer.types.includes("text/x-tts-alias-row")) event.preventDefault();
+            if (!event.dataTransfer.types.includes("text/x-tts-alias-row")) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "move";
+            const after = event.clientY > element.getBoundingClientRect().top + element.offsetHeight / 2;
+            clearDragFeedback();
+            element.classList.add(after ? "drag-over-after" : "drag-over-before");
+            element.dataset.dropPosition = after ? "after" : "before";
+        });
+        element.addEventListener("dragleave", event => {
+            if (!element.contains(event.relatedTarget)) {
+                element.classList.remove("drag-over-before", "drag-over-after");
+            }
         });
         element.addEventListener("drop", event => {
             const draggedId = Number(event.dataTransfer.getData("text/x-tts-alias-row"));
             if (!draggedId || draggedId === row.id) return;
             event.preventDefault();
-            moveUserRow(state, draggedId, row.groupId, row.id);
+            const groupRows = state.userRows.filter(item => item.groupId === row.groupId && item.id !== draggedId);
+            const rowIndex = groupRows.findIndex(item => item.id === row.id);
+            const beforeRowId = element.dataset.dropPosition === "after"
+                ? groupRows[rowIndex + 1]?.id ?? null
+                : row.id;
+            clearDragFeedback();
+            moveUserRow(state, draggedId, row.groupId, beforeRowId);
             render();
         });
     }
@@ -188,6 +277,31 @@ function createRow(state, row, render) {
         targetControl.className = "tts-alias-readonly";
         targetControl.textContent = row.target;
         targetControl.title = missingTarget ? `${row.target} (not currently available)` : row.target;
+    }
+    const voiceCell = document.createElement("div");
+    voiceCell.className = "tts-alias-voice-cell";
+    const details = state.characterDetails.get(aliasKey(row.target));
+    voiceCell.appendChild(targetControl);
+    if (row.target && details && !details.hasReferenceText) {
+        const transcriptWarning = document.createElement("span");
+        transcriptWarning.className = "tts-alias-transcript-warning";
+        transcriptWarning.title = "Audio available — reference transcript missing";
+        transcriptWarning.setAttribute("role", "img");
+        transcriptWarning.setAttribute("aria-label", "Reference transcript missing");
+        voiceCell.appendChild(transcriptWarning);
+    }
+    if (row.target && details?.hasAudio) {
+        const preview = document.createElement("button");
+        const isPlaying = state.previewRowId === row.id;
+        preview.type = "button";
+        preview.className = `tts-alias-preview${isPlaying ? " playing" : ""}`;
+        preview.title = isPlaying ? `Stop ${row.target} preview` : `Preview ${row.target}`;
+        preview.setAttribute("aria-label", preview.title);
+        preview.onclick = event => {
+            event.stopPropagation();
+            togglePreview(state, row, render);
+        };
+        voiceCell.appendChild(preview);
     }
 
     let languageControl;
@@ -227,7 +341,7 @@ function createRow(state, row, render) {
         render();
     };
 
-    element.append(grip, aliasControl, targetControl, languageControl, source, action);
+    element.append(grip, aliasControl, voiceCell, languageControl, source, action);
     return element;
 }
 
@@ -252,7 +366,8 @@ export async function openCharacterAliasManager({ onUpdated } = {}) {
     activeOverlay = overlay;
 
     const state = {
-        characters: [], languages: [], inheritedRows: [], userGroups: [], userRows: [], baseline: "[]",
+        characters: [], characterDetails: new Map(), languages: [], inheritedRows: [],
+        userGroups: [], userRows: [], baseline: "[]", previewAudio: null, previewRowId: null,
         userFile: "", filter: "all", search: "", busy: true, error: "", toast: "",
     };
 
@@ -265,6 +380,7 @@ export async function openCharacterAliasManager({ onUpdated } = {}) {
             });
             if (!discard) return;
         }
+        stopPreview(state);
         overlay.remove();
         activeOverlay = null;
     };
@@ -442,12 +558,22 @@ export async function openCharacterAliasManager({ onUpdated } = {}) {
                     };
                     groupHeader.append(ornament, name, moveUp, moveDown, removeGroup);
                     groupHeader.addEventListener("dragover", event => {
-                        if (event.dataTransfer.types.includes("text/x-tts-alias-row")) event.preventDefault();
+                        if (!event.dataTransfer.types.includes("text/x-tts-alias-row")) return;
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                        clearDragFeedback();
+                        groupHeader.classList.add("drag-over-group");
+                    });
+                    groupHeader.addEventListener("dragleave", event => {
+                        if (!groupHeader.contains(event.relatedTarget)) {
+                            groupHeader.classList.remove("drag-over-group");
+                        }
                     });
                     groupHeader.addEventListener("drop", event => {
                         const draggedId = Number(event.dataTransfer.getData("text/x-tts-alias-row"));
                         if (!draggedId) return;
                         event.preventDefault();
+                        clearDragFeedback();
                         moveUserRow(state, draggedId, group.id);
                         render();
                     });

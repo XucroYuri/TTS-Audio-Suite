@@ -19,6 +19,7 @@ import { SRTTimingDragController, buildSRTTimingMarkup } from "./string_multilin
 import { SRTCueEditController, buildSRTCueNumberMarkup } from "./string_multiline_tag_editor_srt_cue_ops.js";
 import { findTextMatches, replaceMatches } from "./string_multiline_tag_editor_find_replace.js";
 import { openIndexTTSEmotionEditor, openIndexTTSEmotionPresetPicker, parseVectorTag, isEmotionTextTag } from "./index_tts_emotion_tag_popup.js";
+import { openCharacterAliasManager } from "./character_alias_manager_ui.js";
 
 
 // Counter to ensure unique storage keys even when node.id is -1
@@ -1588,7 +1589,11 @@ function addStringMultilineTagEditorWidget(node) {
     const { historySection, undoBtn, redoBtn, historyStatus } = historyData;
     historySection.classList.add("string-multiline-tag-editor-history");
 
-    const charData = buildCharacterSection(state, storageKey);
+    const charData = buildCharacterSection(state, storageKey, () => {
+        openCharacterAliasManager({
+            onUpdated: () => charData.refreshCharacters(),
+        });
+    });
     const { charSection, charSelect, charInput, addCharBtn } = charData;
     charSection.classList.add("string-multiline-tag-editor-panel-section");
 

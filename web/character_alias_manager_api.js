@@ -31,3 +31,8 @@ export function saveCharacterAliases(aliases, groups) {
 export function resetCharacterAliases() {
     return request("/reset", { method: "POST" });
 }
+
+export function characterPreviewUrl(characterName) {
+    const params = new URLSearchParams({ character_name: characterName });
+    return api.apiURL(`/api/tts-audio-suite/character-preview?${params.toString()}`);
+}

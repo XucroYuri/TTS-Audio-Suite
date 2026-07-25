@@ -11,7 +11,12 @@ from utils.voice.alias_store import (
     parse_alias_document,
     write_user_aliases,
 )
-from utils.voice.discovery import get_available_characters, get_character_alias_records, refresh_character_aliases
+from utils.voice.discovery import (
+    get_available_characters,
+    get_character_alias_records,
+    refresh_character_aliases,
+    voice_discovery,
+)
 
 
 def _payload(force_refresh: bool = False) -> Dict[str, Any]:
@@ -22,6 +27,15 @@ def _payload(force_refresh: bool = False) -> Dict[str, Any]:
     except Exception:
         languages = ["de", "en", "es", "fr", "it", "ja", "no", "pt", "th"]
 
+    characters = sorted(get_available_characters(force_refresh=False))
+    character_details = {}
+    for character in characters:
+        info = voice_discovery.get_character_voice_info(character, engine_type="audio_only") or {}
+        character_details[character] = {
+            "hasAudio": bool(info.get("audio_path")),
+            "hasReferenceText": bool(str(info.get("text_content") or "").strip()),
+        }
+
     records = layers["records"]
     user_count = sum(record.get("source") == "user" for record in records)
     alias_file = get_user_alias_file()
@@ -29,7 +43,8 @@ def _payload(force_refresh: bool = False) -> Dict[str, Any]:
     return {
         "aliases": records,
         "inheritedAliases": layers["inherited"],
-        "characters": sorted(get_available_characters(force_refresh=False)),
+        "characters": characters,
+        "characterDetails": character_details,
         "languages": languages,
         "counts": {
             "all": len(records),
@@ -84,4 +99,21 @@ def register_character_alias_routes(routes, web) -> None:
             return json_response(payload)
         except Exception as error:
             print(f"⚠️ Error resetting character aliases: {error}")
+            return json_response({"error": str(error)}, status=500)
+
+    @routes.get("/api/tts-audio-suite/character-preview")
+    async def get_character_preview_endpoint(request):
+        """Stream a canonical character voice using runtime alias resolution."""
+        try:
+            character_name = request.query.get("character_name", "").strip()
+            if not character_name:
+                return json_response({"error": "character_name is required"}, status=400)
+            audio_path, _ = voice_discovery.load_character_voice(character_name, engine_type="audio_only")
+            if not audio_path or not os.path.exists(audio_path):
+                return json_response({"error": f"Character voice not found: {character_name}"}, status=404)
+            response = web.FileResponse(path=audio_path)
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+            return response
+        except Exception as error:
+            print(f"⚠️ Error serving character preview audio: {error}")
             return json_response({"error": str(error)}, status=500)
