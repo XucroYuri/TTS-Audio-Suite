@@ -180,6 +180,14 @@ except Exception as e:
     DOTS_TTS_ENGINE_AVAILABLE = False
 
 try:
+    dramabox_engine_module = load_node_module("dramabox_engine_node", "engines/dramabox_engine_node.py")
+    DramaBoxEngineNode = dramabox_engine_module.DramaBoxEngineNode
+    DRAMABOX_ENGINE_AVAILABLE = True
+except Exception as e:
+    print(f"❌ DramaBox Engine failed: {e}")
+    DRAMABOX_ENGINE_AVAILABLE = False
+
+try:
     fish_audio_s2_engine_module = load_node_module("fish_audio_s2_engine_node", "engines/fish_audio_s2_engine_node.py")
     FishAudioS2EngineNode = fish_audio_s2_engine_module.FishAudioS2EngineNode
     FISH_AUDIO_S2_ENGINE_AVAILABLE = True
@@ -661,6 +669,10 @@ if ECHO_TTS_ENGINE_AVAILABLE:
 if DOTS_TTS_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["DotsTTSEngineNode"] = DotsTTSEngineNode
     NODE_DISPLAY_NAME_MAPPINGS["DotsTTSEngineNode"] = "⚙️ Dots TTS Engine"
+
+if DRAMABOX_ENGINE_AVAILABLE:
+    NODE_CLASS_MAPPINGS["DramaBoxEngineNode"] = DramaBoxEngineNode
+    NODE_DISPLAY_NAME_MAPPINGS["DramaBoxEngineNode"] = "⚙️ DramaBox Engine"
 
 if FISH_AUDIO_S2_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["FishAudioS2EngineNode"] = FishAudioS2EngineNode

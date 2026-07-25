@@ -50,6 +50,15 @@ except Exception as e:
             raise ImportError(f"Dots TTS adapter not available: {e}")
 
 try:
+    from .dramabox_adapter import DramaBoxEngineAdapter
+    DRAMABOX_ADAPTER_AVAILABLE = True
+except Exception as e:
+    DRAMABOX_ADAPTER_AVAILABLE = False
+    class DramaBoxEngineAdapter:
+        def __init__(self, *args, **kwargs):
+            raise ImportError(f"DramaBox adapter not available: {e}")
+
+try:
     from .fish_audio_s2_adapter import FishAudioS2Adapter
     FISH_AUDIO_S2_ADAPTER_AVAILABLE = True
 except Exception as e:
@@ -87,10 +96,11 @@ except Exception as e:
 
 __all__ = [
     'ChatterBoxEngineAdapter', 'F5TTSEngineAdapter', 'CosyVoiceAdapter', 'EchoTTSEngineAdapter',
-    'DotsTTSEngineAdapter', 'OmniVoiceEngineAdapter',
+    'DotsTTSEngineAdapter', 'DramaBoxEngineAdapter', 'OmniVoiceEngineAdapter',
     'MossTTSEngineAdapter', 'HiggsAudioV3EngineAdapter',
     'CHATTERBOX_ADAPTER_AVAILABLE', 'F5TTS_ADAPTER_AVAILABLE', 'COSYVOICE_ADAPTER_AVAILABLE',
-    'ECHO_TTS_ADAPTER_AVAILABLE', 'DOTS_TTS_ADAPTER_AVAILABLE', 'OMNIVOICE_ADAPTER_AVAILABLE',
+    'ECHO_TTS_ADAPTER_AVAILABLE', 'DOTS_TTS_ADAPTER_AVAILABLE',
+    'DRAMABOX_ADAPTER_AVAILABLE', 'OMNIVOICE_ADAPTER_AVAILABLE',
     'MOSS_TTS_ADAPTER_AVAILABLE', 'HIGGS_AUDIO_V3_ADAPTER_AVAILABLE',
     'MossSoundEffectV2Adapter'
 ]

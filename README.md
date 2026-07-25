@@ -17,33 +17,34 @@
   <img src="images/AllNodesShowcase.jpg" alt="TTS Audio Suite Nodes Showcase" />
 </div>
 
-A comprehensive ComfyUI extension providing unified Text-to-Speech, Voice Conversion, Audio Editing, and integrated RVC model training through multiple engines including ChatterboxTTS, F5-TTS, Higgs Audio 2, Higgs Audio v3, Step Audio EditX, MOSS-TTS, Echo-TTS, and RVC (Real-time Voice Conversion), with modular architecture designed for extensibility, runtime isolation for fragile legacy stacks, and a modern Transformers 5 main environment.
+A comprehensive ComfyUI extension providing unified Text-to-Speech, Voice Conversion, Audio Editing, and integrated RVC model training through multiple engines including ChatterboxTTS, DramaBox, F5-TTS, Higgs Audio 2, Higgs Audio v3, Step Audio EditX, MOSS-TTS, Echo-TTS, and RVC (Real-time Voice Conversion), with modular architecture designed for extensibility, runtime isolation for fragile legacy stacks, and a modern Transformers 5 main environment.
 
 Subtitle workflows are still a core focus: the suite can transcribe to SRT, rebuild subtitles from edited transcripts, or estimate fresh SRT timing from plain text using the same advanced readability rules, while preserving project control tags for downstream TTS.
 
 <!-- ENGINE_COMPARISON_START -->
 
-## Quick Engine Comparison — 18 Engines
+## Quick Engine Comparison — 19 Engines
 
 | Engine | Languages | Size | Key Features |
 |--------|-----------|------|--------------|
 | **F5-TTS** | 🇺🇸​🇩🇪​🇪🇸​🇫🇷​🇮🇹​🇯🇵 +4 | ~1.2GB each | Targeted Word/Speech Editing, Speed control |
 | **ChatterBox** | 🇺🇸​🇩🇪​🇫🇷​🇮🇹​🇯🇵​🇰🇷 +4 | ~4.3GB | Expressiveness slider |
-| **ChatterBox 23L** | 🌐 24 languages | ~4.3GB | 24 languages in single model, emotion tokens (v2 - doesn't work) |
+| **ChatterBox 23L** | 🌐 24 languages | ~4.3GB | V1, V2, and V3 official checkpoints |
 | **VibeVoice** | 🇺🇸​🇨🇳​🇩🇪​🇪🇸​🇫🇷​🇮🇹 +21 | 5.4GB / 18GB | 90-min long-form, Native 4-speaker (Base models) |
 | **Higgs Audio 2** | 🇺🇸​🇨🇳​🇩🇪​🇪🇸​🇰🇷 | ~9GB | 3 multi-speaker, CUDA graphs (55+ tokens/sec) |
-| **Higgs Audio v3** | 🌐 100+ languages | ~8GB | Native inline emotion/style/prosody/SFX tags, Zero-shot voice cloning |
+| **Higgs Audio v3** | 🌐 100+ languages | ~8GB | Native inline emotion/style/prosody/SFX tags |
 | **IndexTTS-2** | 🇺🇸​🇨🇳​🇯🇵 | ~4.7GB | Emotion Control: 8 vectors, Text as reference |
 | **CosyVoice3** | 🇺🇸​🇨🇳​🇯🇵​🇰🇷 | ~5.4GB | Paralinguistic tags |
 | **Qwen3-TTS** | 🇺🇸​🇨🇳​🇩🇪​🇪🇸​🇫🇷​🇮🇹 +4 | ~3-6GB | Voice design, ASR (Automatic Speech Recognition) |
-| **Granite ASR** | 🇺🇸​🇩🇪​🇪🇸​🇫🇷​🇯🇵​🇵🇹 | ~4.6GB | ASR (Automatic Speech Recognition), Native speaker attribution / diarization (plus model variant) |
+| **Granite ASR** | 🇺🇸​🇩🇪​🇪🇸​🇫🇷​🇯🇵​🇵🇹 | ~4.6GB | Native speaker attribution / diarization (plus model variant), Native word-level timestamps (plus model variant) |
 | **Step Audio EditX** | 🇺🇸​🇨🇳​🇯🇵​🇰🇷 | ~7GB | Second Pass Speech Editing Node: 14 emotions, 32 speaking styles |
 | **Echo-TTS** | 🇺🇸 | ~5.3GB + ~1.8GB | Diffusion-based (~30s best), Force Speaker KV (speaker drift control) |
-| **Fish Audio S2 Pro** | 🌐 80+ languages | ~10.3GB / ~8.0GB | Free-form sub-word emotion/prosody tags, Zero-shot voice cloning and 80+ languages |
+| **Fish Audio S2 Pro** | 🌐 80+ languages | ~10.3GB / ~8.0GB | Free-form sub-word emotion/prosody tags, Native multi-speaker and multi-turn dialogue with dynamic speaker references |
 | **Dots TTS** | 🇺🇸​🇨🇳​🇩🇪​🇪🇸​🇫🇷​🇮🇹 +13 | ~6GB | Official auto language detect / language control, SOAR and MeanFlow distilled variants |
-| **OmniVoice** | 🌐 600+ languages | ~3.7GB | 600+ language support, Explicit TTS/Voice Design modes with unified-node voice instruction |
-| **MOSS-TTS** | 🇺🇸​🇨🇳​🇩🇪​🇪🇸​🇫🇷​🇮🇹 +18 | ~8.5GB tokenizer + ~6.1GB/17GB/18GB model | 31-language generation with MOSS-TTS-v1.5, Reference-free voice design with MOSS-VoiceGenerator |
-| **MOSS-SoundEffect v2** | 🇺🇸​🇨🇳 | ~11.2GB | Prompt-only text-to-sound generation, 48 kHz mono output |
+| **DramaBox** | 🇺🇸 | ~16.4GB | Expressive scene prompting and stage directions, Native and SRT-aware duration targeting |
+| **OmniVoice** | 🌐 600+ languages | ~3.7GB | Inline non-verbal tags and pronunciation overrides, Reference-free voice design |
+| **MOSS-TTS** | 🇺🇸​🇨🇳​🇩🇪​🇪🇸​🇫🇷​🇮🇹 +18 | ~8.5GB tokenizer + ~6.1GB/17GB/18GB model | Reference-free voice design with MOSS-VoiceGenerator, Native 1-5 speaker TTSD dialogue |
+| **MOSS-SoundEffect v2** | 🇺🇸​🇨🇳 | ~11.2GB | Durations up to 30 seconds, Native negative prompting, CFG, flow shift, and diffusion-step controls |
 | **RVC** | 🌐 Any | 100-300MB | Real-time VC, Integrated training workflow |
 
 📊 **[Full comparison tables →](docs/ENGINE_COMPARISON.md)** | **[Language matrix →](docs/LANGUAGE_SUPPORT.md)** | **[Feature matrix →](docs/FEATURE_COMPARISON.md)** | **[Model download sources →](docs/MODEL_DOWNLOAD_SOURCES.md)** | **[Model folder layouts →](docs/MODEL_LAYOUTS.md)**
@@ -253,6 +254,40 @@ This matters because the suite now has a clearer split:
 
 - **Main environment** for engines that are healthy on the current stack
 - **Isolated runtimes** for engines that are still strategically important but fragile on the modern stack
+
+</details>
+
+<details>
+<summary><h3>DramaBox Expressive TTS and Native Duration Targeting</h3></summary>
+
+**NEW**: DramaBox is integrated as an English expressive TTS engine for both
+**Unified TTS Text** and **Unified SRT TTS**.
+
+* **Scene-driven prompting**: quoted dialogue, narration, stage directions,
+  laughter, sighs, pauses, and delivery transitions
+* **Voice cloning**: optional reference audio with a configurable reference
+  window
+* **Native duration targeting**: explicit generation duration and automatic SRT
+  subtitle-duration targeting before final timing correction
+* **Generation controls**: CFG, negative prompt, STG, rescale, duration
+  multiplier, seed, and optional Perth watermark
+* **Segment controls**: character switching, pause tags, prompt templates, and
+  parameter switching for supported generation settings
+* **Memory options**: fast, staged, and sequential strategies, optional official
+  FP8-cast transformer storage, and optional `torch.compile`
+* **Generation diagnostics**: conservative near-silence detection in console
+  output, TTS generation information, and SRT timing reports
+
+**Important limitations:**
+
+- The official model is English-only and can be sensitive to reference audio,
+  reference duration, requested generation duration, guidance settings, and seed.
+- Fast mode uses roughly 24GB VRAM. Staged/sequential memory strategies and FP8
+  are experimental options for reducing peak memory.
+- DramaBox uses the conditional LTX-2 Community License.
+
+See the **[DramaBox Prompting Guide](docs/DRAMABOX_PROMPTING_GUIDE.md)** for
+prompt syntax, controls, memory modes, duration behavior, and examples.
 
 </details>
 
@@ -1477,7 +1512,7 @@ For offline/manual setup:
 | Engine | Primary model path | Auto-download | Notes |
 |---|---|---|---|
 | ChatterBox | `ComfyUI/models/TTS/chatterbox/` | ✅ | Legacy `ComfyUI/models/chatterbox/` still works |
-| ChatterBox 23-Lang | `ComfyUI/models/TTS/chatterbox_official_23lang/` | ✅ | v1/v2 coexist in same folder |
+| ChatterBox 23-Lang | `ComfyUI/models/TTS/chatterbox_official_23lang/` | ✅ | v1/v2/v3 coexist in same folder |
 | F5-TTS | `ComfyUI/models/TTS/F5-TTS/` | ✅ | Optional Vocos and voice refs |
 | Higgs Audio 2 | `ComfyUI/models/TTS/HiggsAudio/` | ✅ | Generation + tokenizer |
 | Higgs Audio v3 | `ComfyUI/models/TTS/higgs_audio_v3/` | ✅ | Official 4B multilingual TTS model |
@@ -1492,6 +1527,7 @@ For offline/manual setup:
 | Granite ASR | `ComfyUI/models/TTS/granite_asr/` | ✅ | Granite ASR models; plus adds native diarization/timestamps, optional Qwen forced aligner reused lazily for timestamps/SRT fallback |
 | Echo-TTS | `ComfyUI/models/TTS/echo-tts-base/` | ✅ | ~7.1GB total (base + dac); CC-BY-NC-SA |
 | Dots TTS | `ComfyUI/models/TTS/dots_tts/` | ✅ | Official base / soar / mf checkpoints with tokenizer, vocoder, speaker encoder |
+| DramaBox | `ComfyUI/models/TTS/dramabox/DramaBox/` | ✅ | ~16.4GB download; fast mode roughly 24GB VRAM; experimental FP8 peaks on RTX 4090: staged ~15.1GB allocated, sequential ~11.7GB allocated / ~12.4GB reserved; conditional LTX-2 Community License |
 | Fish Audio S2 Pro | `ComfyUI/models/TTS/fish_audio_s2_pro/` | ✅ | Official BF16 or optional community FP8 checkpoint; the official checkpoint can be quantized on load with BNB INT8/NF4; main T5 environment with process teardown for Clear VRAM; Fish Audio Research License |
 | OmniVoice | `ComfyUI/models/TTS/omnivoice/` | ✅ | Official OmniVoice model. Voice cloning in this suite requires explicit reference text. |
 
