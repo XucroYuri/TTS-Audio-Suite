@@ -112,10 +112,21 @@ RVC                   MOSS-TTS            Transformers 5       │
 Model Training                            Higgs Audio v3 TTS   │
                                                                │
                                                                ▼
-              ◄──────── v5.2 ◄─────────────── v5.1 ◄───────────┘
-                          Mar 26                 Jan 26
-                          │                      │
-                          OmniVoice TTS          Dots TTS
+v5.3 ◄─────────────── v5.2 ◄─────────────── v5.1 ◄─────────────┘
+Jun 26                 Mar 26                 Jan 26
+│                      │                      │
+Native SRT Duration    OmniVoice TTS          Dots TTS
+Granite ASR
+Visual Tag Builder
+│
+▼
+v5.4 ───────────────────────────────► v5.5
+Jul 26                                  Jul 26
+│                                       │
+Fish Audio S2 Pro                       MOSS-TTS v1.5
+IndexTTS-2 Emotion Blending              Sound Effects
+Faster Tag Editor                       Voice Designer
+                                        Character Alias Manager
 
 ```
 
