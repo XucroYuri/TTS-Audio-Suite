@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.6.0] - 2026-07-25
+
+### Added
+
+- Add DramaBox expressive TTS and ChatterBox V3 support
+- Add DramaBox scene prompting, character switching, prompt templates, and negative prompting
+- Add DramaBox native SRT duration targeting and generation-duration controls
+- Add DramaBox experimental staged and sequential memory strategies, FP8, and optional compilation
+- Add DramaBox near-silence warnings for text and subtitle generation
+- Add ChatterBox 23-Lang V3 checkpoint selection
+
+### Changed
+
+- Improve multiline parameter controls and generated-audio cache accuracy
+- Update engine comparison tables, model download information, and user guides
 ## [5.5.3] - 2026-07-24
 
 ### Added
