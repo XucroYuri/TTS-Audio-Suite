@@ -650,7 +650,7 @@ function addStringMultilineTagEditorWidget(node) {
     // Initialize with text
     editor.textContent = state.text;
 
-    const INTERNAL_MARKER_PATTERN = /(?:\x00)?(?:NUM_START(?:_\d+)?|NUM_END|SRT_START|SRT_END|TAG_START|TAG_END|EDIT_START|EDIT_END|COMMA_START|COMMA_END|PERIOD_START|PERIOD_END|PUNCT_START|PUNCT_END|SPACE_START|SPACE_END)(?:\x00)?/g;
+    const INTERNAL_MARKER_PATTERN = /(?:\x00)?(?:NUM_START(?:_\d+)?|NUM_END|SRT_START|SRT_END|TAG_START|TAG_END|EDIT_START|EDIT_END|COMMA_START|COMMA_END|PERIOD_START|PERIOD_END|PUNCT_START|PUNCT_END|SPACE_START|SPACE_END|QUOTE_START|QUOTE_END)(?:\x00)?/g;
 
     const stripInternalMarkers = (text) => text.replace(INTERNAL_MARKER_PATTERN, "");
     const stripResidualMarkerArtifacts = (text) => stripInternalMarkers(text).replace(/\x00/g, "");
@@ -1255,6 +1255,10 @@ function addStringMultilineTagEditorWidget(node) {
             return `\x00EDIT_START\x00${tag}\x00EDIT_END\x00`;
         });
 
+        // Highlight complete straight or curly quoted spans. Quoted values
+        // inside parameter/inline tags retain the stronger tag highlighting.
+        html = SyntaxHighlighter.markQuotedSpans(html);
+
         // Highlight commas - green
         html = html.replace(/,/g, '\x00COMMA_START\x00,\x00COMMA_END\x00');
 
@@ -1284,7 +1288,8 @@ function addStringMultilineTagEditorWidget(node) {
             .replace(/\x00COMMA_START\x00(.*?)\x00COMMA_END\x00/g, '<span style="color: #7bd6a7; font-weight: bold;">$1</span>')
             .replace(/\x00PERIOD_START\x00(.*?)\x00PERIOD_END\x00/g, '<span style="color: #e3be69; font-weight: bold;">$1</span>')
             .replace(/\x00PUNCT_START\x00(.*?)\x00PUNCT_END\x00/g, '<span style="color: #f0a1a1;">$1</span>')
-            .replace(/\x00SPACE_START\x00(.*?)\x00SPACE_END\x00/g, '<span style="background: #2a2a2a; color: #eee;">$1</span>');
+            .replace(/\x00SPACE_START\x00(.*?)\x00SPACE_END\x00/g, '<span style="background: #2a2a2a; color: #eee;">$1</span>')
+            .replace(/\x00QUOTE_START\x00(.*?)\x00QUOTE_END\x00/g, '<span class="string-multiline-tag-editor-quote-token">$1</span>');
 
         // Safety net: if any placeholder token survives the replacement chain,
         // strip it before the editor HTML is rendered.
