@@ -7,7 +7,7 @@
 [![Dynamic TOML Badge][version-shield]][version-url]
 [![Ko-Fi](https://img.shields.io/badge/Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/diogogo)
 
-# TTS Audio Suite v5.6.0
+# TTS Audio Suite v5.6.1
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/diogogo)
 
@@ -1268,19 +1268,19 @@ This section provides a detailed guide for installing TTS Audio Suite, covering 
 
 * Python 3.12 or higher
 
-* **System libraries** (Linux only):
+* **Optional system libraries** (Linux only):
   
   ```bash
-  # Ubuntu/Debian - Required for audio processing
+  # Ubuntu/Debian - Optional audio features
   sudo apt-get install portaudio19-dev libsamplerate0-dev
   
   # Fedora/RHEL
   sudo dnf install portaudio-devel libsamplerate-devel
   ```
   
-  > **📋 Why needed?** `libsamplerate0-dev` provides audio resampling libraries for packages like `resampy` and `soxr`. `portaudio19-dev` enables voice recording features.
+  > **📋 Optional:** `libsamplerate0-dev` provides additional audio-resampling support. `portaudio19-dev` enables voice recording. Missing either package no longer blocks installation of the TTS engines.
 
-* **macOS dependencies**:
+* **Optional macOS dependencies**:
   
   ```bash
   brew install portaudio
@@ -1375,17 +1375,17 @@ If you have a direct installation with a virtual environment (venv), follow thes
 
 ### Troubleshooting Dependency Issues
 
-#### System Dependencies (Linux)
+#### Optional System Dependencies (Linux)
 
-**Our install script automatically detects missing system libraries** and will display helpful error messages like:
+**Our install script automatically detects missing optional system libraries** and will display feature warnings like:
 
 ```
-[!] Missing system dependencies detected!
+[!] Optional system dependencies are missing
 ============================================================
-SYSTEM DEPENDENCIES REQUIRED
+OPTIONAL LINUX SYSTEM DEPENDENCIES
 ============================================================
-• libsamplerate0-dev (for audio resampling)  
-• portaudio19-dev (for voice recording)
+• libsamplerate0-dev (optional additional audio-resampling support)
+• portaudio19-dev (optional voice recording)
 
 Please install with:
 # Ubuntu/Debian:
@@ -1394,7 +1394,7 @@ sudo apt-get install libsamplerate0-dev portaudio19-dev
 # Fedora/RHEL:
 sudo dnf install libsamplerate-devel portaudio-devel
 ============================================================
-Then run this install script again.
+Core TTS installation will continue; only the listed features may be unavailable.
 ```
 
 #### Python Environment Issues

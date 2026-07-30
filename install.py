@@ -178,7 +178,7 @@ class TTSAudioInstaller:
             self.log("All requirements.txt dependencies already satisfied", "SUCCESS")
 
     def check_system_dependencies(self):
-        """Check for required system libraries and provide helpful error messages"""
+        """Check optional system libraries and provide helpful feature warnings."""
         if self.is_windows:
             return True  # Windows packages come pre-compiled
             
@@ -211,7 +211,7 @@ class TTSAudioInstaller:
         return False
 
     def check_macos_dependencies(self):
-        """Check for required system libraries on macOS"""
+        """Check for optional system libraries on macOS."""
         self.log("Checking macOS system dependencies...", "INFO")
         missing_deps = []
 
@@ -230,9 +230,9 @@ class TTSAudioInstaller:
             pass
         
         if missing_deps:
-            self.log("Missing system dependencies detected!", "WARNING")
+            self.log("Optional system dependencies are missing", "WARNING")
             print("\n" + "="*60)
-            print("MACOS SYSTEM DEPENDENCIES REQUIRED")
+            print("OPTIONAL MACOS SYSTEM DEPENDENCIES")
             print("="*60)
             for dep, purpose in missing_deps:
                 print(f"• {dep} (for {purpose})")
@@ -250,14 +250,18 @@ class TTSAudioInstaller:
                 print("Should show: arm64 (not x86_64)")
             
             print("="*60)
-            print("Then run this install script again.\n")
-            return False
-        
-        self.log("macOS system dependencies check passed", "SUCCESS")
+            print("Core TTS installation will continue; only the listed features may be unavailable.\n")
+            self.add_install_warning(
+                "Optional macOS audio libraries",
+                "Install the listed Homebrew packages to enable every audio feature.",
+            )
+
+        if not missing_deps:
+            self.log("macOS system dependencies check passed", "SUCCESS")
         return True
-    
+
     def check_linux_dependencies(self):
-        """Check for required system libraries on Linux"""
+        """Check for optional system libraries on Linux."""
         self.log("Checking Linux system dependencies...", "INFO")
         missing_deps = []
         
@@ -279,9 +283,9 @@ class TTSAudioInstaller:
             pass
         
         if missing_deps:
-            self.log("Missing system dependencies detected!", "WARNING")
+            self.log("Optional system dependencies are missing", "WARNING")
             print("\n" + "="*60)
-            print("LINUX SYSTEM DEPENDENCIES REQUIRED")
+            print("OPTIONAL LINUX SYSTEM DEPENDENCIES")
             print("="*60)
             for dep, purpose in missing_deps:
                 print(f"• {dep} (for {purpose})")
@@ -291,13 +295,21 @@ class TTSAudioInstaller:
             deps_list = " ".join([dep for dep, _ in missing_deps])
             print(f"sudo apt-get install {deps_list}")
             print("\n# Fedora/RHEL:")
-            fedora_deps = deps_list.replace('-dev', '-devel').replace('19', '')
+            fedora_packages = {
+                "libsamplerate0-dev": "libsamplerate-devel",
+                "portaudio19-dev": "portaudio-devel",
+            }
+            fedora_deps = " ".join(fedora_packages.get(dep, dep) for dep, _ in missing_deps)
             print(f"sudo dnf install {fedora_deps}")
             print("="*60)
-            print("Then run this install script again.\n")
-            return False
-        
-        self.log("Linux system dependencies check passed", "SUCCESS")
+            print("Core TTS installation will continue; only the listed features may be unavailable.\n")
+            self.add_install_warning(
+                "Optional Linux audio libraries",
+                "Install the listed system packages to enable every audio feature.",
+            )
+
+        if not missing_deps:
+            self.log("Linux system dependencies check passed", "SUCCESS")
         return True
 
     def run_pip_command(self, args: List[str], description: str, ignore_errors: bool = False) -> bool:
@@ -1907,10 +1919,8 @@ def main():
         else:
             installer.ensure_requirements_installed()  # Ensure requirements.txt is installed first
 
-            # Check system dependencies (Linux only)
-            if not installer.check_system_dependencies():
-                installer.log("System dependency check failed - aborting installation", "ERROR")
-                sys.exit(1)
+            # Report optional system dependencies without blocking engine setup.
+            installer.check_system_dependencies()
 
             # Install in correct order to prevent conflicts
             installer.install_pytorch_with_cuda()  # Install PyTorch first with proper CUDA detection
