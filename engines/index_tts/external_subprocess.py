@@ -30,6 +30,7 @@ class ExternalIndexTTSSubprocessProxy:
         use_torch_compile: bool = False,
         use_accel: bool = False,
         timeout_seconds: float = 900.0,
+        termination_grace_seconds: float = 5.0,
         temp_root: str | Path | None = None,
     ) -> None:
         self.source_root = Path(source_root).resolve()
@@ -41,6 +42,7 @@ class ExternalIndexTTSSubprocessProxy:
         self.use_torch_compile = bool(use_torch_compile)
         self.use_accel = bool(use_accel)
         self.timeout_seconds = float(timeout_seconds)
+        self.termination_grace_seconds = float(termination_grace_seconds)
         self.temp_root = Path(temp_root).resolve() if temp_root is not None else None
         self.python_executable = self._resolve_python_executable()
         self.runner_path = Path(__file__).with_name("external_subprocess_runner.py").resolve()
@@ -67,6 +69,8 @@ class ExternalIndexTTSSubprocessProxy:
             raise RuntimeError(f"IndexTTS subprocess runner is missing: {self.runner_path}")
         if self.timeout_seconds <= 0:
             raise ValueError("IndexTTS subprocess timeout must be positive")
+        if self.termination_grace_seconds <= 0:
+            raise ValueError("IndexTTS subprocess termination grace must be positive")
         if self.temp_root is not None and not self.temp_root.is_dir():
             raise RuntimeError(f"IndexTTS temporary root is not a directory: {self.temp_root}")
 
@@ -78,6 +82,7 @@ class ExternalIndexTTSSubprocessProxy:
         with tempfile.TemporaryDirectory(
             prefix="tts-audio-suite-indextts-",
             dir=str(self.temp_root) if self.temp_root is not None else None,
+            ignore_cleanup_errors=True,
         ) as temporary_directory:
             temporary_path = Path(temporary_directory)
             child_output = temporary_path / "output.wav"
@@ -106,7 +111,16 @@ class ExternalIndexTTSSubprocessProxy:
             )
             command = [str(self.python_executable), str(self.runner_path), str(manifest_path)]
             environment = os.environ.copy()
-            environment.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
+            environment.update(
+                {
+                    "PYTHONIOENCODING": "utf-8",
+                    "PYTHONUTF8": "1",
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                    "PYTHONPYCACHEPREFIX": str(temporary_path / "pycache"),
+                    "NUMBA_CACHE_DIR": str(temporary_path / "numba-cache"),
+                    "MPLCONFIGDIR": str(temporary_path / "matplotlib"),
+                }
+            )
             popen_kwargs: dict[str, Any] = {
                 "cwd": str(self.source_root),
                 "env": environment,
@@ -125,9 +139,10 @@ class ExternalIndexTTSSubprocessProxy:
             try:
                 stdout, stderr = process.communicate(timeout=self.timeout_seconds)
             except subprocess.TimeoutExpired as exc:
-                self._terminate_process_tree(process)
-                stdout, stderr = process.communicate()
+                stdout, stderr, cleanup_diagnostic = self._cleanup_timed_out_process(process)
                 diagnostic = (stderr or stdout or str(exc)).strip()
+                if cleanup_diagnostic:
+                    diagnostic = f"{diagnostic}; cleanup: {cleanup_diagnostic}"
                 raise TimeoutError(
                     f"External IndexTTS subprocess exceeded {self.timeout_seconds:g}s: {diagnostic}"
                 ) from exc
@@ -157,21 +172,69 @@ class ExternalIndexTTSSubprocessProxy:
                 shutil.copyfile(child_output, requested_output)
             return int(sample_rate), samples
 
+    def _cleanup_timed_out_process(self, process) -> tuple[str, str, str]:
+        """Best-effort bounded cleanup that never replaces the primary timeout."""
+        notes: list[str] = []
+        try:
+            self._terminate_process_tree(process, self.termination_grace_seconds)
+        except Exception as exc:
+            notes.append(f"tree termination failed: {exc}")
+
+        try:
+            still_running = process.poll() is None
+        except Exception as exc:
+            notes.append(f"process status check failed: {exc}")
+            still_running = True
+        if still_running:
+            try:
+                process.kill()
+            except Exception as exc:
+                notes.append(f"direct kill failed: {exc}")
+
+        try:
+            stdout, stderr = process.communicate(timeout=self.termination_grace_seconds)
+        except subprocess.TimeoutExpired:
+            notes.append(
+                f"cleanup communicate exceeded {self.termination_grace_seconds:g}s"
+            )
+            stdout, stderr = "", ""
+        except Exception as exc:
+            notes.append(f"cleanup communicate failed: {exc}")
+            stdout, stderr = "", ""
+        try:
+            if process.poll() is None:
+                notes.append("process exit could not be verified")
+        except Exception as exc:
+            notes.append(f"final process status check failed: {exc}")
+        return stdout, stderr, "; ".join(notes)
+
     @staticmethod
-    def _terminate_process_tree(process) -> None:
+    def _terminate_process_tree(process, grace_seconds: float) -> None:
+        if process.poll() is not None:
+            return
         if os.name == "nt":
-            subprocess.run(
+            result = subprocess.run(
                 ["taskkill", "/PID", str(process.pid), "/T", "/F"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 check=False,
+                timeout=grace_seconds,
             )
-            return
+            if result.returncode != 0 and process.poll() is None:
+                diagnostic = (result.stderr or result.stdout or "taskkill failed").strip()
+                raise RuntimeError(diagnostic)
+        else:
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                return
         try:
-            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+            process.wait(timeout=grace_seconds)
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError(
+                f"process tree did not exit within {grace_seconds:g}s"
+            ) from exc
 
     def to(self, device):
         self.device = str(device)

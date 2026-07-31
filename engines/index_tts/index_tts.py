@@ -2,7 +2,6 @@ import os
 import sys
 import torch
 import torchaudio
-import tempfile
 import folder_paths
 import numpy as np
 from typing import Optional, Union, List, Dict, Any
@@ -339,11 +338,6 @@ class IndexTTSEngine:
             # Normalize to valid range
             emotion_vector = [max(0.0, min(1.2, v)) for v in emotion_vector]
         
-        # Create temporary output file in ComfyUI temp directory
-        comfyui_temp_dir = folder_paths.get_temp_directory()
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False, dir=comfyui_temp_dir) as tmp_file:
-            output_path = tmp_file.name
-            
         try:
             # Filter out unsupported kwargs (e.g., speech_speed from external nodes)
             supported_kwargs = {}

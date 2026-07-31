@@ -291,6 +291,13 @@ def test_external_index_subprocess_uses_checkout_venv_and_cleans_temp(monkeypatc
     assert Path(observed["command"][1]).name == "external_subprocess_runner.py"
     assert observed["kwargs"]["cwd"] == str(source_root)
     assert observed["timeout"] == 321.0
+    child_environment = observed["kwargs"]["env"]
+    assert child_environment["PYTHONDONTWRITEBYTECODE"] == "1"
+    pycache_prefix = Path(child_environment["PYTHONPYCACHEPREFIX"])
+    assert pycache_prefix.is_relative_to(temp_root)
+    assert not pycache_prefix.is_relative_to(source_root)
+    assert Path(child_environment["NUMBA_CACHE_DIR"]).is_relative_to(temp_root)
+    assert Path(child_environment["MPLCONFIGDIR"]).is_relative_to(temp_root)
     assert observed["manifest"]["source_root"] == str(source_root)
     assert observed["manifest"]["model_dir"] == str(model_dir)
     assert observed["manifest"]["inference"]["text"] == "真实外部推理。"
@@ -349,11 +356,22 @@ def test_external_index_subprocess_terminates_tree_on_timeout_and_cleans_temp(mo
                 raise module.subprocess.TimeoutExpired("indextts", timeout)
             return ("", "child stopped")
 
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
     monkeypatch.setattr(module.subprocess, "Popen", TimedOutProcess)
     monkeypatch.setattr(
         module.ExternalIndexTTSSubprocessProxy,
         "_terminate_process_tree",
-        staticmethod(lambda process: terminated.append(process.pid)),
+        staticmethod(
+            lambda process, grace: (
+                terminated.append((process.pid, grace)),
+                setattr(process, "returncode", -9),
+            )
+        ),
     )
     proxy = module.ExternalIndexTTSSubprocessProxy(
         source_root=source_root,
@@ -361,14 +379,193 @@ def test_external_index_subprocess_terminates_tree_on_timeout_and_cleans_temp(mo
         device="cuda:0",
         use_fp16=True,
         timeout_seconds=0.5,
+        termination_grace_seconds=0.25,
         temp_root=temp_root,
     )
 
     with pytest.raises(TimeoutError, match="exceeded 0.5s"):
         proxy.infer(spk_audio_prompt=str(voice_path), text="超时清理。", output_path=None)
 
-    assert terminated == [4444]
+    assert terminated == [(4444, 0.25)]
     assert not list(temp_root.iterdir())
+
+
+@pytest.mark.unit
+def test_external_index_timeout_falls_back_to_direct_kill_when_tree_kill_fails(monkeypatch, tmp_path):
+    module = _load_external_index_subprocess_module()
+    source_root, model_dir, _, voice_path, temp_root = _prepare_external_index_runtime(tmp_path)
+    instances = []
+
+    class TreeKillFailedProcess:
+        pid = 4545
+        returncode = None
+
+        def __init__(self, command, **kwargs):
+            self.timeouts = []
+            self.kill_calls = 0
+            instances.append(self)
+
+        def communicate(self, timeout=None):
+            self.timeouts.append(timeout)
+            if len(self.timeouts) == 1:
+                raise module.subprocess.TimeoutExpired("indextts", timeout)
+            return ("", "direct child stopped")
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.kill_calls += 1
+            self.returncode = -9
+
+    monkeypatch.setattr(module.subprocess, "Popen", TreeKillFailedProcess)
+    monkeypatch.setattr(
+        module.ExternalIndexTTSSubprocessProxy,
+        "_terminate_process_tree",
+        staticmethod(lambda process, grace: (_ for _ in ()).throw(OSError("taskkill denied"))),
+    )
+    proxy = module.ExternalIndexTTSSubprocessProxy(
+        source_root=source_root,
+        model_dir=model_dir,
+        device="cuda:0",
+        use_fp16=True,
+        timeout_seconds=0.5,
+        termination_grace_seconds=0.2,
+        temp_root=temp_root,
+    )
+
+    with pytest.raises(TimeoutError) as error:
+        proxy.infer(spk_audio_prompt=str(voice_path), text="树终止失败。", output_path=None)
+
+    assert "exceeded 0.5s" in str(error.value)
+    assert "taskkill denied" in str(error.value)
+    assert instances[0].kill_calls == 1
+    assert instances[0].timeouts == [0.5, 0.2]
+    assert not list(temp_root.iterdir())
+
+
+@pytest.mark.unit
+def test_external_index_timeout_cleanup_remains_bounded_when_process_will_not_exit(monkeypatch, tmp_path):
+    module = _load_external_index_subprocess_module()
+    source_root, model_dir, _, voice_path, temp_root = _prepare_external_index_runtime(tmp_path)
+    instances = []
+
+    class StuckProcess:
+        pid = 4646
+        returncode = None
+
+        def __init__(self, command, **kwargs):
+            self.timeouts = []
+            instances.append(self)
+
+        def communicate(self, timeout=None):
+            self.timeouts.append(timeout)
+            raise module.subprocess.TimeoutExpired("indextts", timeout)
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            raise PermissionError("direct kill denied")
+
+    monkeypatch.setattr(module.subprocess, "Popen", StuckProcess)
+    monkeypatch.setattr(
+        module.ExternalIndexTTSSubprocessProxy,
+        "_terminate_process_tree",
+        staticmethod(lambda process, grace: None),
+    )
+    proxy = module.ExternalIndexTTSSubprocessProxy(
+        source_root=source_root,
+        model_dir=model_dir,
+        device="cuda:0",
+        use_fp16=True,
+        timeout_seconds=0.5,
+        termination_grace_seconds=0.2,
+        temp_root=temp_root,
+    )
+
+    with pytest.raises(TimeoutError) as error:
+        proxy.infer(spk_audio_prompt=str(voice_path), text="无法退出。", output_path=None)
+
+    assert "exceeded 0.5s" in str(error.value)
+    assert "direct kill denied" in str(error.value)
+    assert "cleanup communicate exceeded 0.2s" in str(error.value)
+    assert instances[0].timeouts == [0.5, 0.2]
+    assert not list(temp_root.iterdir())
+
+
+@pytest.mark.unit
+def test_external_index_timeout_reports_when_cleanup_cannot_verify_process_exit(monkeypatch, tmp_path):
+    module = _load_external_index_subprocess_module()
+    source_root, model_dir, _, voice_path, temp_root = _prepare_external_index_runtime(tmp_path)
+
+    class UnverifiedExitProcess:
+        pid = 4696
+        returncode = None
+
+        def __init__(self, command, **kwargs):
+            self.calls = 0
+
+        def communicate(self, timeout=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise module.subprocess.TimeoutExpired("indextts", timeout)
+            return ("", "")
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(module.subprocess, "Popen", UnverifiedExitProcess)
+    monkeypatch.setattr(
+        module.ExternalIndexTTSSubprocessProxy,
+        "_terminate_process_tree",
+        staticmethod(lambda process, grace: None),
+    )
+    proxy = module.ExternalIndexTTSSubprocessProxy(
+        source_root=source_root,
+        model_dir=model_dir,
+        device="cuda:0",
+        use_fp16=True,
+        timeout_seconds=0.5,
+        termination_grace_seconds=0.2,
+        temp_root=temp_root,
+    )
+
+    with pytest.raises(TimeoutError) as error:
+        proxy.infer(spk_audio_prompt=str(voice_path), text="退出状态未知。", output_path=None)
+
+    assert "process exit could not be verified" in str(error.value)
+    assert not list(temp_root.iterdir())
+
+
+@pytest.mark.unit
+def test_windows_tree_kill_has_a_deadline_and_checks_taskkill_failure(monkeypatch):
+    module = _load_external_index_subprocess_module()
+    observed = {}
+
+    class RunningProcess:
+        pid = 4747
+
+        @staticmethod
+        def poll():
+            return None
+
+    def failed_taskkill(command, **kwargs):
+        observed["command"] = command
+        observed["kwargs"] = kwargs
+        return module.subprocess.CompletedProcess(command, 5, "", "access denied")
+
+    monkeypatch.setattr(module.os, "name", "nt")
+    monkeypatch.setattr(module.subprocess, "run", failed_taskkill)
+
+    with pytest.raises(RuntimeError, match="access denied"):
+        module.ExternalIndexTTSSubprocessProxy._terminate_process_tree(RunningProcess(), 0.3)
+
+    assert observed["command"] == ["taskkill", "/PID", "4747", "/T", "/F"]
+    assert observed["kwargs"]["timeout"] == 0.3
 
 
 @pytest.mark.unit
@@ -405,6 +602,32 @@ def test_index_engine_uses_external_subprocess_for_registered_checkout(monkeypat
     assert created["model_dir"] == str(model_dir)
     assert str(created["device"]).startswith("cuda")
     assert created["use_fp16"] is True
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("inference_fails", [False, True])
+def test_index_engine_generate_does_not_create_unused_output_wav(monkeypatch, tmp_path, inference_fails):
+    import engines.index_tts.index_tts as engine_module
+
+    class FakeInference:
+        def infer(self, **kwargs):
+            if inference_fails:
+                raise RuntimeError("official inference failed")
+            return 22050, engine_module.np.ones((220, 1), dtype=engine_module.np.float32)
+
+    engine = engine_module.IndexTTSEngine.__new__(engine_module.IndexTTSEngine)
+    engine._tts_engine = FakeInference()
+    engine._ensure_model_loaded = lambda: None
+    monkeypatch.setattr(engine_module.folder_paths, "get_temp_directory", lambda: str(tmp_path))
+
+    if inference_fails:
+        with pytest.raises(RuntimeError, match="official inference failed"):
+            engine.generate(text="失败路径", speaker_audio="voice.wav")
+    else:
+        audio = engine.generate(text="成功路径", speaker_audio="voice.wav")
+        assert audio.shape == (1, 220)
+
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.unit
