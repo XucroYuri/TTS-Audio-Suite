@@ -1685,13 +1685,19 @@ def test_windows_fallback_catches_real_child_spawned_after_last_snapshot(monkeyp
         def _spawn_late(self):
             spawn_signal.touch()
             deadline = time.monotonic() + 0.75
-            while not late_pid_path.is_file() and time.monotonic() < deadline:
+            late_pid_text = ""
+            while time.monotonic() < deadline:
+                if late_pid_path.is_file():
+                    late_pid_text = late_pid_path.read_text().strip()
+                    if late_pid_text.isdecimal():
+                        break
                 time.sleep(0.005)
-            assert late_pid_path.is_file(), (
-                "controlled parent did not spawn the late child; "
+            assert late_pid_text.isdecimal(), (
+                "controlled parent did not publish the late child PID; "
                 f"root={process.pid} script={self.pid} "
                 f"root_poll={process.poll()} script_running={self._delegate.is_running()} "
                 f"signal_exists={spawn_signal.exists()} "
+                f"late_pid_text={late_pid_text!r} "
                 f"stderr={process.stderr.read() if process.poll() is not None else ''}"
             )
 
