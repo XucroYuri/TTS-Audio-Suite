@@ -74,6 +74,27 @@ def test_targets_profile_selects_only_api_bridge_target_engines(monkeypatch):
 
 
 @pytest.mark.unit
+def test_targets_profile_summary_does_not_claim_generation_readiness(monkeypatch, capsys):
+    monkeypatch.setenv("TTS_AUDIO_SUITE_INSTALL_PROFILE", "tts_more_targets")
+    installer = INSTALL_MODULE.TTSAudioInstaller()
+    installer.is_windows = True
+    installer.engine_validation_results = {
+        "GPT-SoVITS API Bridge (configuration)": True,
+        "IndexTTS API Bridge (configuration)": True,
+        "CosyVoice API Bridge (configuration)": True,
+    }
+
+    installer.print_installation_summary(True)
+
+    output = capsys.readouterr().out
+    assert "API Bridge checks prove configuration imports only" in output
+    assert "API BRIDGE CONFIGURATION READY - VERIFY EXTERNAL RUNTIMES BEFORE SYNTHESIS" in output
+    assert "READY TO USE TTS AUDIO SUITE IN COMFYUI!" not in output
+    assert "IndexTTS-2 will use fallback text processing instead" not in output
+    assert "all TTS generation will work fine" not in output
+
+
+@pytest.mark.unit
 def test_fresh_engine_probe_uses_a_subprocess(monkeypatch):
     installer = INSTALL_MODULE.TTSAudioInstaller()
     calls = []

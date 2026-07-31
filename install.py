@@ -1966,8 +1966,9 @@ class TTSAudioInstaller:
             print(" "*12 + "INSTALLATION NEEDS ATTENTION BEFORE USE")
         print("="*70)
 
-        # Windows-specific note about text normalization
-        if self.is_windows:
+        # This note describes the bundled IndexTTS installer and must not imply
+        # synthesis readiness for the configuration-only API Bridge profile.
+        if self.is_windows and self.optional_engine_installers_enabled:
             print("\n" + "-"*50)
             print("   WINDOWS NOTES")
             print("-"*50)
