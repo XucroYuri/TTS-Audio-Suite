@@ -636,8 +636,11 @@ def test_windows_tree_kill_reports_stubborn_descendant_within_hard_deadline(monk
             self.pid = pid
 
         def children(self, recursive=False):
-            assert recursive is True
+            assert recursive is False
             return [child] if self.pid == 4848 else []
+
+        def create_time(self):
+            return float(self.pid)
 
         @staticmethod
         def is_running():
@@ -650,6 +653,13 @@ def test_windows_tree_kill_reports_stubborn_descendant_within_hard_deadline(monk
         @staticmethod
         def kill():
             pass
+
+        @staticmethod
+        def suspend():
+            pass
+
+        def wait(self, timeout=None):
+            raise module.psutil.TimeoutExpired(timeout, pid=self.pid)
 
     root = StubbornProcess(4848)
     child = StubbornProcess(4949)
@@ -690,6 +700,239 @@ def test_windows_tree_kill_reports_stubborn_descendant_within_hard_deadline(monk
     assert "4949" in str(error.value)
     assert elapsed < 0.35
     assert sum(observed_waits) <= 0.21
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(os.name != "nt", reason="Windows late-descendant fallback contract")
+def test_windows_fallback_catches_real_child_spawned_after_last_snapshot(monkeypatch, tmp_path):
+    module = _load_external_index_subprocess_module()
+    spawn_signal = tmp_path / "spawn-late"
+    late_pid_path = tmp_path / "late-pid"
+    parent_script = (
+        "import pathlib,subprocess,sys,time; "
+        "signal=pathlib.Path(sys.argv[1]); late_path=pathlib.Path(sys.argv[2]); "
+        "print('READY',flush=True); "
+        "\nwhile not signal.exists(): time.sleep(0.005)\n"
+        "late=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
+        "late_path.write_text(str(late.pid)); time.sleep(60)"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", parent_script, str(spawn_signal), str(late_pid_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+    )
+    assert process.stdout is not None
+    assert process.stdout.readline().strip() == "READY"
+    real_psutil_process = module.psutil.Process
+    real_run = subprocess.run
+
+    root_process = real_psutil_process(process.pid)
+    script_process = [
+        candidate
+        for candidate in [root_process, *root_process.children(recursive=True)]
+        if str(spawn_signal) in " ".join(candidate.cmdline())
+    ][-1]
+
+    class ScriptProcessProxy:
+        def __init__(self, delegate):
+            self._delegate = delegate
+            self.pid = delegate.pid
+
+        def __getattr__(self, name):
+            return getattr(self._delegate, name)
+
+        def children(self, recursive=False):
+            return [wrap_process(candidate) for candidate in self._delegate.children(recursive)]
+
+        def _spawn_late(self):
+            spawn_signal.touch()
+            deadline = time.monotonic() + 0.75
+            while not late_pid_path.is_file() and time.monotonic() < deadline:
+                time.sleep(0.005)
+            assert late_pid_path.is_file(), (
+                "controlled parent did not spawn the late child; "
+                f"root={process.pid} script={self.pid} "
+                f"root_poll={process.poll()} script_running={self._delegate.is_running()} "
+                f"signal_exists={spawn_signal.exists()} "
+                f"stderr={process.stderr.read() if process.poll() is not None else ''}"
+            )
+
+        def suspend(self):
+            self._spawn_late()
+            return self._delegate.suspend()
+
+        def terminate(self):
+            self._spawn_late()
+            return self._delegate.terminate()
+
+    script_proxy = ScriptProcessProxy(script_process)
+
+    class RootProcessProxy:
+        def __init__(self, delegate):
+            self._delegate = delegate
+            self.pid = delegate.pid
+
+        def __getattr__(self, name):
+            return getattr(self._delegate, name)
+
+        def children(self, recursive=False):
+            return [wrap_process(candidate) for candidate in self._delegate.children(recursive)]
+
+    def wrap_process(candidate):
+        return script_proxy if candidate.pid == script_process.pid else candidate
+
+    root_proxy = script_proxy if script_process.pid == process.pid else RootProcessProxy(root_process)
+    monkeypatch.setattr(module.os, "name", "nt")
+    monkeypatch.setattr(
+        module,
+        "psutil",
+        types.SimpleNamespace(
+            Process=lambda pid: root_proxy if pid == process.pid else real_psutil_process(pid),
+            NoSuchProcess=module.psutil.NoSuchProcess,
+            AccessDenied=module.psutil.AccessDenied,
+            TimeoutExpired=module.psutil.TimeoutExpired,
+            wait_procs=module.psutil.wait_procs,
+            pid_exists=module.psutil.pid_exists,
+        ),
+    )
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda command, **kwargs: module.subprocess.CompletedProcess(
+            command,
+            5,
+            "",
+            "simulated taskkill denial",
+        ),
+    )
+
+    late_pid = None
+    try:
+        diagnostic = module.ExternalIndexTTSSubprocessProxy._terminate_process_tree(process, 1.5)
+        assert late_pid_path.is_file(), diagnostic
+        late_pid = int(late_pid_path.read_text())
+
+        assert "simulated taskkill denial" in diagnostic
+        assert process.poll() is not None
+        assert not module.psutil.pid_exists(late_pid)
+    finally:
+        for candidate_pid in (late_pid, process.pid):
+            if candidate_pid and module.psutil.pid_exists(candidate_pid):
+                real_run(
+                    ["taskkill", "/PID", str(candidate_pid), "/T", "/F"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=3,
+                    check=False,
+                )
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object containment contract")
+def test_windows_job_launch_contains_real_child_created_after_resume(tmp_path):
+    module = _load_external_index_subprocess_module()
+    spawn_signal = tmp_path / "spawn-contained-child"
+    parent_script = (
+        "import pathlib,subprocess,sys,time; signal=pathlib.Path(sys.argv[1]); "
+        "\nwhile not signal.exists(): time.sleep(0.005)\n"
+        "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
+        "print(child.pid,flush=True); time.sleep(60)"
+    )
+    process = module.ExternalIndexTTSSubprocessProxy._start_process(
+        [sys.executable, "-c", parent_script, str(spawn_signal)],
+        {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+            "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP,
+        },
+    )
+    real_run = subprocess.run
+    child_pid = None
+    try:
+        spawn_signal.touch()
+        assert process.stdout is not None
+        child_pid = int(process.stdout.readline().strip())
+
+        diagnostic = module.ExternalIndexTTSSubprocessProxy._terminate_process_tree(process, 1.0)
+
+        assert "Job Object" in diagnostic
+        assert process.poll() is not None
+        assert not module.psutil.pid_exists(child_pid)
+    finally:
+        for candidate_pid in (child_pid, process.pid):
+            if candidate_pid and module.psutil.pid_exists(candidate_pid):
+                real_run(
+                    ["taskkill", "/PID", str(candidate_pid), "/T", "/F"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=3,
+                    check=False,
+                )
+
+
+@pytest.mark.unit
+def test_windows_broad_slow_fallback_obeys_one_hard_deadline(monkeypatch):
+    module = _load_external_index_subprocess_module()
+
+    class SlowProcess:
+        def __init__(self, pid, children=()):
+            self.pid = pid
+            self._children = list(children)
+
+        def children(self, recursive=False):
+            time.sleep(0.01)
+            return list(self._children)
+
+        def create_time(self):
+            time.sleep(0.01)
+            return float(self.pid)
+
+        def is_running(self):
+            time.sleep(0.01)
+            return True
+
+        def suspend(self):
+            time.sleep(0.01)
+
+        def terminate(self):
+            time.sleep(0.01)
+
+        def kill(self):
+            time.sleep(0.01)
+
+    children = [SlowProcess(6100 + index) for index in range(24)]
+    root = SlowProcess(6000, children)
+
+    class RunningPopen:
+        pid = 6000
+
+        @staticmethod
+        def poll():
+            return None
+
+    monkeypatch.setattr(module.os, "name", "nt")
+    monkeypatch.setattr(module.psutil, "Process", lambda pid: root)
+    monkeypatch.setattr(module.psutil, "wait_procs", lambda processes, timeout: ([], list(processes)))
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda command, **kwargs: module.subprocess.CompletedProcess(
+            command,
+            5,
+            "",
+            "simulated taskkill denial",
+        ),
+    )
+
+    started = time.monotonic()
+    with pytest.raises((RuntimeError, TimeoutError), match="deadline"):
+        module.ExternalIndexTTSSubprocessProxy._terminate_process_tree(RunningPopen(), 0.05)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.15
 
 
 def _install_failing_temporary_directory(monkeypatch, module, message):

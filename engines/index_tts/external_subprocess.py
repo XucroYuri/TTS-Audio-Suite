@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections import deque
+import ctypes
+from ctypes import wintypes
 import json
 import os
 from pathlib import Path
@@ -15,6 +18,103 @@ from typing import Any
 
 import psutil
 import soundfile
+
+
+_WINDOWS_CREATE_SUSPENDED = 0x00000004
+_WINDOWS_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+_WINDOWS_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+
+
+class _WindowsIOCounters(ctypes.Structure):
+    _fields_ = [
+        ("ReadOperationCount", ctypes.c_ulonglong),
+        ("WriteOperationCount", ctypes.c_ulonglong),
+        ("OtherOperationCount", ctypes.c_ulonglong),
+        ("ReadTransferCount", ctypes.c_ulonglong),
+        ("WriteTransferCount", ctypes.c_ulonglong),
+        ("OtherTransferCount", ctypes.c_ulonglong),
+    ]
+
+
+class _WindowsJobBasicLimitInformation(ctypes.Structure):
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_longlong),
+        ("PerJobUserTimeLimit", ctypes.c_longlong),
+        ("LimitFlags", wintypes.DWORD),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", wintypes.DWORD),
+        ("Affinity", ctypes.c_size_t),
+        ("PriorityClass", wintypes.DWORD),
+        ("SchedulingClass", wintypes.DWORD),
+    ]
+
+
+class _WindowsJobExtendedLimitInformation(ctypes.Structure):
+    _fields_ = [
+        ("BasicLimitInformation", _WindowsJobBasicLimitInformation),
+        ("IoInfo", _WindowsIOCounters),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+
+class _WindowsKillOnCloseJob:
+    """Kernel containment assigned before a suspended runner may create children."""
+
+    def __init__(self) -> None:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        ]
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        self._kernel32 = kernel32
+        self._handle = kernel32.CreateJobObjectW(None, None)
+        if not self._handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        information = _WindowsJobExtendedLimitInformation()
+        information.BasicLimitInformation.LimitFlags = (
+            _WINDOWS_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        )
+        if not kernel32.SetInformationJobObject(
+            self._handle,
+            _WINDOWS_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(information),
+            ctypes.sizeof(information),
+        ):
+            error = ctypes.WinError(ctypes.get_last_error())
+            kernel32.CloseHandle(self._handle)
+            self._handle = None
+            raise error
+
+    def assign(self, process_handle: int) -> None:
+        if not self._kernel32.AssignProcessToJobObject(self._handle, process_handle):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    def close(self) -> None:
+        if self._handle is None:
+            return
+        handle = self._handle
+        self._handle = None
+        if not self._kernel32.CloseHandle(handle):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 class ExternalIndexTTSSubprocessProxy:
@@ -138,7 +238,7 @@ class ExternalIndexTTSSubprocessProxy:
             else:
                 popen_kwargs["start_new_session"] = True
 
-            process = subprocess.Popen(command, **popen_kwargs)
+            process = self._start_process(command, popen_kwargs)
             try:
                 stdout, stderr = process.communicate(timeout=self.timeout_seconds)
             except subprocess.TimeoutExpired as exc:
@@ -149,6 +249,11 @@ class ExternalIndexTTSSubprocessProxy:
                 raise TimeoutError(
                     f"External IndexTTS subprocess exceeded {self.timeout_seconds:g}s: {diagnostic}"
                 ) from exc
+
+            try:
+                self._close_windows_job(process)
+            except Exception as exc:
+                raise RuntimeError(f"Windows Job Object cleanup failed: {exc}") from exc
 
             if stdout:
                 print(f"[IndexTTS external stdout]\n{stdout.rstrip()}")
@@ -185,6 +290,50 @@ class ExternalIndexTTSSubprocessProxy:
                 if primary_error is None:
                     raise RuntimeError(diagnostic) from cleanup_error
                 primary_error.args = (f"{primary_error}; {diagnostic}",)
+
+    @staticmethod
+    def _start_process(command, popen_kwargs):
+        """Start a Windows runner suspended, contain it, then allow it to execute."""
+        options = dict(popen_kwargs)
+        if os.name != "nt":
+            return subprocess.Popen(command, **options)
+        options["creationflags"] = (
+            int(options.get("creationflags", 0)) | _WINDOWS_CREATE_SUSPENDED
+        )
+        process = subprocess.Popen(command, **options)
+        # Lightweight Popen doubles used by unit tests have no native process
+        # handle and were never actually suspended.
+        if not hasattr(process, "_handle"):
+            return process
+        job: _WindowsKillOnCloseJob | None = None
+        try:
+            job = _WindowsKillOnCloseJob()
+            job.assign(int(process._handle))
+            psutil.Process(process.pid).resume()
+            setattr(process, "_tts_windows_job", job)
+            return process
+        except Exception as exc:
+            if job is not None:
+                try:
+                    job.close()
+                except Exception:
+                    pass
+            try:
+                process.kill()
+            except Exception:
+                pass
+            raise RuntimeError(
+                f"failed to assign suspended IndexTTS runner to Windows Job Object: {exc}"
+            ) from exc
+
+    @staticmethod
+    def _close_windows_job(process) -> bool:
+        job = getattr(process, "_tts_windows_job", None)
+        if job is None:
+            return False
+        job.close()
+        setattr(process, "_tts_windows_job", None)
+        return True
 
     def _cleanup_timed_out_process(self, process) -> tuple[str, str, str]:
         """Best-effort bounded cleanup that never replaces the primary timeout."""
@@ -237,13 +386,229 @@ class ExternalIndexTTSSubprocessProxy:
         return stdout, stderr, "; ".join(notes)
 
     @staticmethod
-    def _windows_process_is_alive(candidate) -> bool:
+    def _remaining_before(deadline: float, action: str, notes: list[str]) -> float:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            notes.append(f"process-tree deadline exhausted before {action}")
+            return 0.0
+        return remaining
+
+    @staticmethod
+    def _windows_process_identity(candidate, deadline: float, notes: list[str]):
+        if not ExternalIndexTTSSubprocessProxy._remaining_before(
+            deadline,
+            f"identity check for PID {candidate.pid}",
+            notes,
+        ):
+            return None
         try:
+            identity = (int(candidate.pid), float(candidate.create_time()))
+        except psutil.NoSuchProcess:
+            return None
+        except Exception as exc:
+            notes.append(f"identity check for PID {candidate.pid} failed: {exc}")
+            return None
+        if time.monotonic() >= deadline:
+            notes.append(
+                f"process-tree deadline exhausted during identity check for PID {candidate.pid}"
+            )
+            return None
+        return identity
+
+    @staticmethod
+    def _windows_identity_is_alive(candidate, identity, deadline: float, notes: list[str]):
+        if not ExternalIndexTTSSubprocessProxy._remaining_before(
+            deadline,
+            f"liveness check for PID {candidate.pid}",
+            notes,
+        ):
+            return None
+        try:
+            current_identity = (int(candidate.pid), float(candidate.create_time()))
+            if current_identity != identity:
+                notes.append(f"PID {candidate.pid} was reused; skipped stale process handle")
+                return False
+            if not ExternalIndexTTSSubprocessProxy._remaining_before(
+                deadline,
+                f"is_running check for PID {candidate.pid}",
+                notes,
+            ):
+                return None
             return bool(candidate.is_running())
         except psutil.NoSuchProcess:
             return False
-        except Exception:
+        except Exception as exc:
+            notes.append(f"liveness check for PID {candidate.pid} failed: {exc}")
             return True
+
+    @staticmethod
+    def _bounded_windows_fallback(process, deadline: float, notes: list[str]) -> None:
+        """Suspend parents before direct snapshots so the discovered tree is stable."""
+        if not ExternalIndexTTSSubprocessProxy._remaining_before(
+            deadline,
+            f"opening root PID {process.pid}",
+            notes,
+        ):
+            raise TimeoutError("; ".join(notes))
+        try:
+            pending = deque([psutil.Process(process.pid)])
+        except psutil.NoSuchProcess:
+            return
+        except Exception as exc:
+            notes.append(f"opening root PID {process.pid} failed: {exc}")
+            raise RuntimeError("; ".join(notes)) from exc
+
+        captured: dict[tuple[int, float], Any] = {}
+        while pending:
+            candidate = pending.popleft()
+            identity = ExternalIndexTTSSubprocessProxy._windows_process_identity(
+                candidate,
+                deadline,
+                notes,
+            )
+            if identity is None:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("; ".join(notes))
+                continue
+            if identity in captured:
+                continue
+            captured[identity] = candidate
+            alive = ExternalIndexTTSSubprocessProxy._windows_identity_is_alive(
+                candidate,
+                identity,
+                deadline,
+                notes,
+            )
+            if alive is None:
+                raise TimeoutError("; ".join(notes))
+            if not alive:
+                continue
+
+            if not ExternalIndexTTSSubprocessProxy._remaining_before(
+                deadline,
+                f"suspending PID {candidate.pid}",
+                notes,
+            ):
+                raise TimeoutError("; ".join(notes))
+            try:
+                candidate.suspend()
+            except psutil.NoSuchProcess:
+                continue
+            except Exception as exc:
+                notes.append(
+                    f"suspend PID {candidate.pid} failed; spawn race cannot be excluded: {exc}"
+                )
+
+            if not ExternalIndexTTSSubprocessProxy._remaining_before(
+                deadline,
+                f"snapshotting direct children of PID {candidate.pid}",
+                notes,
+            ):
+                raise TimeoutError("; ".join(notes))
+            try:
+                pending.extend(candidate.children(recursive=False))
+            except psutil.NoSuchProcess:
+                pass
+            except Exception as exc:
+                notes.append(f"direct-child snapshot for PID {candidate.pid} failed: {exc}")
+
+        # Every captured parent is now suspended, so its child list cannot grow.
+        # Terminate only after the complete stable tree is known; terminating a
+        # launcher shim early can otherwise take its still-unvisited child with it.
+        for _identity, candidate in reversed(captured.items()):
+            if not ExternalIndexTTSSubprocessProxy._remaining_before(
+                deadline,
+                f"terminating PID {candidate.pid}",
+                notes,
+            ):
+                raise TimeoutError("; ".join(notes))
+            try:
+                candidate.terminate()
+            except psutil.NoSuchProcess:
+                pass
+            except Exception as exc:
+                notes.append(f"terminate PID {candidate.pid} failed: {exc}")
+
+        survivors: list[int] = []
+        for identity, candidate in captured.items():
+            alive = ExternalIndexTTSSubprocessProxy._windows_identity_is_alive(
+                candidate,
+                identity,
+                deadline,
+                notes,
+            )
+            if alive is None:
+                raise TimeoutError("; ".join(notes))
+            if not alive:
+                continue
+            remaining = ExternalIndexTTSSubprocessProxy._remaining_before(
+                deadline,
+                f"waiting for PID {candidate.pid} after terminate",
+                notes,
+            )
+            if remaining <= 0:
+                raise TimeoutError("; ".join(notes))
+            try:
+                candidate.wait(timeout=min(0.05, remaining))
+            except (psutil.TimeoutExpired, AttributeError):
+                pass
+            except psutil.NoSuchProcess:
+                continue
+            except Exception as exc:
+                notes.append(f"wait for PID {candidate.pid} failed: {exc}")
+            alive = ExternalIndexTTSSubprocessProxy._windows_identity_is_alive(
+                candidate,
+                identity,
+                deadline,
+                notes,
+            )
+            if alive is None:
+                raise TimeoutError("; ".join(notes))
+            if not alive:
+                continue
+            if not ExternalIndexTTSSubprocessProxy._remaining_before(
+                deadline,
+                f"killing PID {candidate.pid}",
+                notes,
+            ):
+                raise TimeoutError("; ".join(notes))
+            try:
+                candidate.kill()
+            except psutil.NoSuchProcess:
+                continue
+            except Exception as exc:
+                notes.append(f"kill PID {candidate.pid} failed: {exc}")
+            remaining = ExternalIndexTTSSubprocessProxy._remaining_before(
+                deadline,
+                f"waiting for PID {candidate.pid} after kill",
+                notes,
+            )
+            if remaining <= 0:
+                raise TimeoutError("; ".join(notes))
+            try:
+                candidate.wait(timeout=min(0.05, remaining))
+            except (psutil.TimeoutExpired, AttributeError):
+                pass
+            except psutil.NoSuchProcess:
+                continue
+            except Exception as exc:
+                notes.append(f"post-kill wait for PID {candidate.pid} failed: {exc}")
+            alive = ExternalIndexTTSSubprocessProxy._windows_identity_is_alive(
+                candidate,
+                identity,
+                deadline,
+                notes,
+            )
+            if alive is None:
+                raise TimeoutError("; ".join(notes))
+            if alive:
+                survivors.append(candidate.pid)
+        if survivors:
+            raise RuntimeError(
+                "; ".join(
+                    [*notes, f"process-tree PIDs still alive: {', '.join(map(str, survivors))}"]
+                )
+            )
 
     @staticmethod
     def _terminate_process_tree(process, grace_seconds: float) -> str:
@@ -252,119 +617,71 @@ class ExternalIndexTTSSubprocessProxy:
         if grace_seconds <= 0:
             raise TimeoutError("process-tree termination deadline was already exhausted")
         deadline = time.monotonic() + grace_seconds
+        notes: list[str] = []
         if os.name == "nt":
-            notes: list[str] = []
-            captured: dict[int, Any] = {}
-
-            def capture_tree() -> None:
+            if getattr(process, "_tts_windows_job", None) is not None:
+                if not ExternalIndexTTSSubprocessProxy._remaining_before(
+                    deadline,
+                    "closing Windows Job Object",
+                    notes,
+                ):
+                    raise TimeoutError("; ".join(notes))
                 try:
-                    root = psutil.Process(process.pid)
-                    for candidate in [*root.children(recursive=True), root]:
-                        captured[candidate.pid] = candidate
-                except psutil.NoSuchProcess:
-                    return
+                    ExternalIndexTTSSubprocessProxy._close_windows_job(process)
+                    notes.append("Windows Job Object closed with kill-on-close")
                 except Exception as exc:
-                    notes.append(f"process-tree snapshot failed: {exc}")
+                    notes.append(f"Windows Job Object close failed: {exc}")
 
-            capture_tree()
-            remaining = max(0.0, deadline - time.monotonic())
-            if remaining <= 0:
-                raise TimeoutError("process-tree termination deadline exhausted before taskkill")
-            taskkill_timeout = min(remaining, grace_seconds / 2.0)
-            taskkill_failed = False
-            try:
-                result = subprocess.run(
-                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    check=False,
-                    timeout=taskkill_timeout,
+            if process.poll() is None and getattr(process, "_tts_windows_job", None) is None:
+                remaining = ExternalIndexTTSSubprocessProxy._remaining_before(
+                    deadline,
+                    "taskkill",
+                    notes,
                 )
-                if result.returncode != 0:
+                if remaining <= 0:
+                    raise TimeoutError("; ".join(notes))
+                taskkill_timeout = min(remaining, grace_seconds / 2.0)
+                taskkill_failed = False
+                try:
+                    result = subprocess.run(
+                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        check=False,
+                        timeout=taskkill_timeout,
+                    )
+                    if result.returncode != 0:
+                        taskkill_failed = True
+                        diagnostic = (
+                            result.stderr or result.stdout or "taskkill failed"
+                        ).strip()
+                        notes.append(f"taskkill failed ({result.returncode}): {diagnostic}")
+                except subprocess.TimeoutExpired:
                     taskkill_failed = True
-                    diagnostic = (result.stderr or result.stdout or "taskkill failed").strip()
-                    notes.append(f"taskkill failed ({result.returncode}): {diagnostic}")
-            except subprocess.TimeoutExpired:
-                taskkill_failed = True
-                notes.append(f"taskkill exceeded {taskkill_timeout:g}s")
-            except Exception as exc:
-                taskkill_failed = True
-                notes.append(f"taskkill invocation failed: {exc}")
-
-            # Refresh while the root still exists so descendants created during taskkill
-            # are covered by the bounded fallback as well.
-            capture_tree()
-            alive = [
-                candidate
-                for candidate in captured.values()
-                if ExternalIndexTTSSubprocessProxy._windows_process_is_alive(candidate)
-            ]
-            if taskkill_failed or alive:
-                descendants = [candidate for candidate in alive if candidate.pid != process.pid]
-                root_candidates = [candidate for candidate in alive if candidate.pid == process.pid]
-                termination_order = [*reversed(descendants), *root_candidates]
-                for candidate in termination_order:
-                    try:
-                        candidate.terminate()
-                    except psutil.NoSuchProcess:
-                        pass
-                    except Exception as exc:
-                        notes.append(f"terminate PID {candidate.pid} failed: {exc}")
-
-                alive = [
-                    candidate
-                    for candidate in termination_order
-                    if ExternalIndexTTSSubprocessProxy._windows_process_is_alive(candidate)
-                ]
-                remaining = max(0.0, deadline - time.monotonic())
-                if alive and remaining > 0:
-                    try:
-                        _, alive = psutil.wait_procs(alive, timeout=remaining / 2.0)
-                    except Exception as exc:
-                        notes.append(f"terminate wait failed: {exc}")
-
-                for candidate in alive:
-                    try:
-                        candidate.kill()
-                    except psutil.NoSuchProcess:
-                        pass
-                    except Exception as exc:
-                        notes.append(f"kill PID {candidate.pid} failed: {exc}")
-
-                alive = [
-                    candidate
-                    for candidate in alive
-                    if ExternalIndexTTSSubprocessProxy._windows_process_is_alive(candidate)
-                ]
-                remaining = max(0.0, deadline - time.monotonic())
-                if alive and remaining > 0:
-                    try:
-                        _, alive = psutil.wait_procs(alive, timeout=remaining)
-                    except Exception as exc:
-                        notes.append(f"kill wait failed: {exc}")
-
-                alive = [
-                    candidate
-                    for candidate in alive
-                    if ExternalIndexTTSSubprocessProxy._windows_process_is_alive(candidate)
-                ]
-                if alive:
-                    alive_pids = ", ".join(str(candidate.pid) for candidate in alive)
-                    raise RuntimeError(
-                        "; ".join([*notes, f"process-tree PIDs still alive: {alive_pids}"])
+                    notes.append(f"taskkill exceeded {taskkill_timeout:g}s")
+                except Exception as exc:
+                    taskkill_failed = True
+                    notes.append(f"taskkill invocation failed: {exc}")
+                if taskkill_failed or process.poll() is None:
+                    ExternalIndexTTSSubprocessProxy._bounded_windows_fallback(
+                        process,
+                        deadline,
+                        notes,
                     )
         else:
             try:
                 os.killpg(os.getpgid(process.pid), signal.SIGKILL)
             except ProcessLookupError:
                 return ""
-            notes = []
         if process.poll() is None:
-            remaining = max(0.0, deadline - time.monotonic())
+            remaining = ExternalIndexTTSSubprocessProxy._remaining_before(
+                deadline,
+                "waiting for process-tree exit",
+                notes,
+            )
             if remaining <= 0:
-                diagnostic = "; ".join(notes) if notes else "deadline exhausted"
-                raise TimeoutError(f"process tree exit could not be verified: {diagnostic}")
+                raise TimeoutError("; ".join(notes))
             try:
                 process.wait(timeout=remaining)
             except subprocess.TimeoutExpired as exc:
