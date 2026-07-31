@@ -206,7 +206,10 @@ def generate_readme_condensed_table(data):
                     lang_display += f" +{total_langs - 6}"
 
         # Get 1-2 key features
-        special_features = e.get("special_features", [])
+        special_features = e.get(
+            "readme_key_features",
+            e.get("special_features", []),
+        )
         if len(special_features) > 2:
             key_features = ", ".join(special_features[:2])
         else:

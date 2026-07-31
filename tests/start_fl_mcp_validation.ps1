@@ -37,7 +37,10 @@ if ($RestartComfyUI -and $listener) {
 if (-not $listener) {
     $root = Quote-PowerShell $comfyRoot
     $python = Quote-PowerShell $comfyPython
-    $command = "`$env:PYTHONUTF8='1'; `$env:PYTHONIOENCODING='utf-8'; Set-Location -LiteralPath $root; & $python 'main.py' '--listen' '127.0.0.1'"
+    # Keep ComfyUI's console UTF-8 without forcing UTF-8 locale semantics on
+    # Windows subprocess pipes. Some GPU tools emit the active Windows code
+    # page, which makes Python's strict UTF-8 reader thread crash.
+    $command = "`$env:PYTHONIOENCODING='utf-8'; Remove-Item Env:PYTHONUTF8 -ErrorAction SilentlyContinue; Set-Location -LiteralPath $root; & $python 'main.py' '--listen' '127.0.0.1'"
     Start-VisibleTerminal "ComfyUI :8188" $comfyRoot $command
 }
 

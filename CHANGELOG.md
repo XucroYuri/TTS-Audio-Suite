@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.6.2] - 2026-07-30
+
+### Changed
+
+- Improve F5-TTS fallback so the standard PyTorch attention backend continues working
+
+### Fixed
+
+- Fix F5-TTS failing to load with incomplete FlashAttention installations
+- Fix F5-TTS startup crashes when optional FlashAttention components are missing
+## [5.6.1] - 2026-07-30
+
+### Fixed
+
+- Fix Fish Audio S2 installation in headless Linux environments
+- Fix missing optional audio libraries preventing Fish Audio S2 setup
+- Improve Linux and macOS dependency warnings so core TTS installation continues
+- Correct Fedora package installation guidance
+## [5.6.0] - 2026-07-25
+
+### Added
+
+- Add DramaBox expressive TTS and ChatterBox V3 support
+- Add DramaBox scene prompting, character switching, prompt templates, and negative prompting
+- Add DramaBox native SRT duration targeting and generation-duration controls
+- Add DramaBox experimental staged and sequential memory strategies, FP8, and optional compilation
+- Add DramaBox near-silence warnings for text and subtitle generation
+- Add ChatterBox 23-Lang V3 checkpoint selection
+
+### Changed
+
+- Improve multiline parameter controls and generated-audio cache accuracy
+- Update engine comparison tables, model download information, and user guides
+## [5.5.3] - 2026-07-24
+
+### Added
+
+- Add an in-ComfyUI Character Alias Manager for creating, organizing, previewing, and overriding character aliases
+- Add Character Alias Manager access from Character Voices and the Multiline TTS Tag Editor
+
+### Changed
+
+- Improve Character Voices waveform clarity, canvas zoom behavior, character discovery, and console logging
 ## [5.5.2] - 2026-07-21
 
 ### Fixed

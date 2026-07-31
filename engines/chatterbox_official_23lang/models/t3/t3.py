@@ -235,6 +235,9 @@ class T3(nn.Module):
         length_penalty=1.0,
         repetition_penalty=1.2,
         cfg_weight=0.5,
+        # TTS Audio Suite patch: V3 follows upstream by disabling the legacy
+        # multilingual alignment analyzer while V1/V2 retain existing behavior.
+        use_alignment_analyzer=True,
     ):
         """
         Args:
@@ -267,7 +270,7 @@ class T3(nn.Module):
         if not self.compiled:
             # Default to None for English models, only create for multilingual
             alignment_stream_analyzer = None
-            if self.hp.is_multilingual:
+            if self.hp.is_multilingual and use_alignment_analyzer:
                 alignment_stream_analyzer = AlignmentStreamAnalyzer(
                     self.tfmr,
                     None,
@@ -331,7 +334,7 @@ class T3(nn.Module):
             inputs_embeds=inputs_embeds,
             past_key_values=None,
             use_cache=True,
-            output_attentions=True,
+            output_attentions=use_alignment_analyzer,
             output_hidden_states=True,
             return_dict=True,
         )

@@ -6,7 +6,6 @@ import torch
 from pathlib import Path
 from unicodedata import category
 from tokenizers import Tokenizer
-from huggingface_hub import hf_hub_download
 from utils.text.russian_stress_support import get_russian_text_stresser
 
 
@@ -55,9 +54,6 @@ class EnTokenizer:
         txt = txt.replace(UNK, '')
         return txt
 
-
-# Model repository
-REPO_ID = "ResembleAI/chatterbox"
 
 # Global instances for optional dependencies
 _kakasi = None
@@ -167,13 +163,13 @@ class ChineseCangjieConverter:
         self._init_segmenter()
     
     def _load_cangjie_mapping(self, model_dir=None):
-        """Load Cangjie mapping from HuggingFace model repository."""        
+        """Load the Cangjie mapping from the organized local model folder."""
         try:
-            cangjie_file = hf_hub_download(
-                repo_id=REPO_ID,
-                filename="Cangjie5_TC.json",
-                cache_dir=model_dir
-            )
+            # TTS Audio Suite patch: this asset is downloaded by the unified
+            # downloader; tokenization must never create a hidden HF cache.
+            cangjie_file = Path(model_dir) / "Cangjie5_TC.json"
+            if not cangjie_file.is_file():
+                raise FileNotFoundError(f"Missing local Cangjie mapping: {cangjie_file}")
             
             with open(cangjie_file, "r", encoding="utf-8") as fp:
                 data = json.load(fp)

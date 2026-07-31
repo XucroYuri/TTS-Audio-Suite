@@ -434,9 +434,19 @@ class Attention(nn.Module):
 
 # Attention processor
 
+# TTS Audio Suite patch: FlashAttention is optional and F5 defaults to the
+# PyTorch backend. Treat partial/incompatible installations as unavailable
+# instead of crashing module import when submodules or compiled symbols are
+# missing.
+FLASH_ATTN_AVAILABLE = False
 if is_package_available("flash_attn"):
-    from flash_attn.bert_padding import pad_input, unpad_input
-    from flash_attn import flash_attn_varlen_func, flash_attn_func
+    try:
+        from flash_attn.bert_padding import pad_input, unpad_input
+        from flash_attn import flash_attn_varlen_func, flash_attn_func
+
+        FLASH_ATTN_AVAILABLE = True
+    except (ImportError, OSError, AttributeError):
+        pass
 
 
 class AttnProcessor:
@@ -447,7 +457,7 @@ class AttnProcessor:
         attn_mask_enabled: bool = True,
     ):
         if attn_backend == "flash_attn":
-            assert is_package_available("flash_attn"), "Please install flash-attn first."
+            assert FLASH_ATTN_AVAILABLE, "Please install a compatible flash-attn build first."
 
         self.pe_attn_head = pe_attn_head
         self.attn_backend = attn_backend

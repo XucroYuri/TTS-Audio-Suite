@@ -23,6 +23,22 @@ class AudioTimingError(Exception):
     pass
 
 
+def _stack_stretched_channels(
+    channels: List[torch.Tensor],
+    device: torch.device,
+) -> torch.Tensor:
+    """Stack independently stretched channels after reconciling tiny length drift."""
+    if not channels:
+        raise AudioTimingError("No audio channels were processed successfully")
+    common_length = min(channel.size(-1) for channel in channels)
+    if common_length <= 0:
+        raise AudioTimingError("Time stretching produced an empty audio channel")
+    return torch.stack(
+        [channel[..., :common_length] for channel in channels],
+        dim=0,
+    ).to(device)
+
+
 class AudioTimingUtils:
     """
     Utilities for audio timing manipulation and synchronization
@@ -211,7 +227,7 @@ class PhaseVocoderTimeStretcher:
                 stretched_channels.append(torch.from_numpy(stretched))
         
         # Combine channels
-        result = torch.stack(stretched_channels, dim=0).to(audio.device)
+        result = _stack_stretched_channels(stretched_channels, audio.device)
         
         # Restore original shape if input was 1D
         if len(original_shape) == 1:
@@ -366,7 +382,7 @@ class FFmpegTimeStretcher:
             if not stretched:
                 raise AudioTimingError("No audio was processed successfully")
                 
-            result = torch.stack(stretched, dim=0).to(audio.device)
+            result = _stack_stretched_channels(stretched, audio.device)
             return result.squeeze(0) if len(original_shape) == 1 else result
             
         except Exception as e:
@@ -425,7 +441,7 @@ class FFmpegTimeStretcher:
             
         try:
             # Stack channels and restore shape
-            result = torch.stack(stretched, dim=0).to(audio.device)
+            result = _stack_stretched_channels(stretched, audio.device)
             print(f"Successfully processed all channels")
             return result.squeeze(0) if len(original_shape) == 1 else result
             

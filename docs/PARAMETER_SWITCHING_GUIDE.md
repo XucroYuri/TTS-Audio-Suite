@@ -222,6 +222,20 @@ Important:
 - They are not positional inline effects
 - Keep `<>` free for true inline post-processing tags like Step Audio EditX
 
+### DramaBox Prompt Templates
+
+`prompt_template` (alias `template`) applies a `{seg}` wrapper and enables
+templating for that segment automatically:
+
+```text
+[Narrator|template:A woman whispers, "{seg}"] This line is whispered.
+[Narrator] This line returns to the DramaBox engine-node settings.
+```
+
+The template should include `{seg}`. If it is omitted, DramaBox warns once and
+appends `"{seg}"` automatically. A separate inline enable parameter is not
+required.
+
 ### Per-Segment Fine-Tuning in SRT
 
 Create dynamic SRT content with per-segment control:

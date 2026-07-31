@@ -4,6 +4,45 @@
  */
 
 export class SyntaxHighlighter {
+    static markQuotedSpans(text) {
+        let output = "";
+        let index = 0;
+
+        while (index < text.length) {
+            const character = text[index];
+
+            // Parameter and inline tags have their own stronger highlighting.
+            if (character === "[" || character === "<") {
+                const closingCharacter = character === "[" ? "]" : ">";
+                const closingIndex = text.indexOf(closingCharacter, index + 1);
+                if (closingIndex !== -1) {
+                    output += text.slice(index, closingIndex + 1);
+                    index = closingIndex + 1;
+                    continue;
+                }
+            }
+
+            const closingQuote = character === "\"" ? "\"" : character === "“" ? "”" : null;
+            if (closingQuote) {
+                const closingIndex = text.indexOf(closingQuote, index + 1);
+                const lineEndIndex = text.indexOf("\n", index + 1);
+                if (
+                    closingIndex !== -1 &&
+                    (lineEndIndex === -1 || closingIndex < lineEndIndex)
+                ) {
+                    output += `\x00QUOTE_START\x00${text.slice(index, closingIndex + 1)}\x00QUOTE_END\x00`;
+                    index = closingIndex + 1;
+                    continue;
+                }
+            }
+
+            output += character;
+            index += 1;
+        }
+
+        return output;
+    }
+
     static getPlainText(editor) {
         const clone = editor.cloneNode(true);
         const spans = clone.querySelectorAll('span');
@@ -93,6 +132,9 @@ export class SyntaxHighlighter {
             '\x00TAG_START\x00$1\x00TAG_END\x00'
         );
 
+        // Highlight complete straight or curly quoted spans.
+        html = this.markQuotedSpans(html);
+
         // Highlight commas - green
         html = html.replace(/,/g, '\x00COMMA_START\x00,\x00COMMA_END\x00');
 
@@ -119,7 +161,8 @@ export class SyntaxHighlighter {
             .replace(/\x00COMMA_START\x00(.*?)\x00COMMA_END\x00/g, '<span style="color: #66ff66; font-weight: bold;">$1</span>')
             .replace(/\x00PERIOD_START\x00(.*?)\x00PERIOD_END\x00/g, '<span style="color: #ffcc33; font-weight: bold;">$1</span>')
             .replace(/\x00PUNCT_START\x00(.*?)\x00PUNCT_END\x00/g, '<span style="color: #ff9999;">$1</span>')
-            .replace(/\x00SPACE_START\x00(.*?)\x00SPACE_END\x00/g, '<span style="background: #2a2a2a; color: #eee;">$1</span>');
+            .replace(/\x00SPACE_START\x00(.*?)\x00SPACE_END\x00/g, '<span style="background: #2a2a2a; color: #eee;">$1</span>')
+            .replace(/\x00QUOTE_START\x00(.*?)\x00QUOTE_END\x00/g, '<span class="string-multiline-tag-editor-quote-token">$1</span>');
 
         // Update only if changed to avoid flicker
         if (editor.innerHTML !== html) {

@@ -29,7 +29,7 @@ except ImportError:
     PERTH_AVAILABLE = False
 
 from .models.t3 import T3
-from .models.s3tokenizer import S3_SR, drop_invalid_tokens
+from .models.s3tokenizer import S3_SR, S3_TOKEN_RATE, drop_invalid_tokens
 from .models.s3gen import S3GEN_SR, S3Gen
 from .models.tokenizers import EnTokenizer, MTLTokenizer
 from .models.voice_encoder import VoiceEncoder
@@ -219,7 +219,8 @@ class ChatterboxOfficial23LangTTS:
         """
         Load ChatterBox Official 23-Lang multilingual model from local directory.
         Expected files:
-        - t3_23lang.safetensors (multilingual T3 model v1) OR t3_mtl23ls_v2.safetensors (v2)
+        - t3_23lang.safetensors (v1), t3_mtl23ls_v2.safetensors (v2),
+          or t3_mtl23ls_v3.safetensors (v3)
         - s3gen.pt (S3Gen model)
         - ve.pt (Voice encoder)
         - mtl_tokenizer.json (multilingual tokenizer)
@@ -281,8 +282,8 @@ class ChatterboxOfficial23LangTTS:
             print("📦 Loading multilingual tokenizer...")
             tokenizer_path = None
 
-            if version_for_files == "v2":
-                # Try v2 enhanced tokenizer first
+            if version_for_files in ("v2", "v3"):
+                # V2 and V3 use the expanded multilingual tokenizer.
                 candidate_path = ckpt_dir / "grapheme_mtl_merged_expanded_v1.json"
                 if candidate_path.exists():
                     tokenizer_path = candidate_path
@@ -327,23 +328,26 @@ class ChatterboxOfficial23LangTTS:
 
             # Support multiple T3 filename patterns:
             # - Official v1: t3_23lang.safetensors
-            # - Official v2: t3_mtl23ls_v2.safetensors
+            # - Official v2/v3: t3_mtl23ls_v2.safetensors / t3_mtl23ls_v3.safetensors
             # - Vietnamese Viterbox: t3_ml24ls_v2.safetensors
             # - Egyptian Arabic: t3_mtl23ls_v2.safetensors
             # - Future variants: any t3_*.safetensors
             t3_path = None
-            if version_for_files == "v2":
-                # Try specific v2 patterns first
-                for pattern in ["t3_mtl23ls_v2.safetensors", "t3_ml24ls_v2.safetensors"]:
+            if version_for_files in ("v2", "v3"):
+                patterns = (
+                    ["t3_mtl23ls_v3.safetensors"]
+                    if version_for_files == "v3"
+                    else ["t3_mtl23ls_v2.safetensors", "t3_ml24ls_v2.safetensors"]
+                )
+                for pattern in patterns:
                     candidate = ckpt_dir / pattern
                     if candidate.exists():
                         t3_path = candidate
                         break
 
-                # Fallback: find any t3_*_v2.safetensors file
+                # Fallback stays version-specific so V2 and V3 cannot be mixed.
                 if not t3_path:
-                    import glob
-                    matches = list(ckpt_dir.glob("t3_*_v2.safetensors"))
+                    matches = list(ckpt_dir.glob(f"t3_*_{version_for_files}.safetensors"))
                     if matches:
                         t3_path = matches[0]
             else:
@@ -505,7 +509,7 @@ class ChatterboxOfficial23LangTTS:
         Args:
             device: Device to load model on
             model_name: Model to load (defaults to "ChatterBox Official 23-Lang")
-            model_version: Model version - "v1" or "v2" (defaults to "v2")
+            model_version: Model version - "v1", "v2", or "v3"
         """
         # Get model configuration
         model_config = get_model_config(model_name)
@@ -692,6 +696,7 @@ class ChatterboxOfficial23LangTTS:
                 repetition_penalty=repetition_penalty,
                 min_p=min_p,
                 top_p=top_p,
+                use_alignment_analyzer=self.model_version != "v3",
             )
             # Extract only the conditional batch.
             speech_tokens = speech_tokens[0]
@@ -705,6 +710,14 @@ class ChatterboxOfficial23LangTTS:
                 ref_dict=self.conds.gen,
             )
             wav = wav.squeeze(0).detach().cpu().numpy()
+
+            if self.model_version == "v3":
+                # TTS Audio Suite patch: match official V3 by dropping the
+                # final degraded pre-EOS speech-token artifact.
+                token_count = int(speech_tokens.shape[-1])
+                clean_token_count = max(1, token_count - 1)
+                wav = wav[: clean_token_count * (S3GEN_SR // S3_TOKEN_RATE)]
+
             if self.enable_watermarking:
                 self._init_watermarker_if_needed()
                 if self.watermarker is not None:

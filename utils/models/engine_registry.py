@@ -157,6 +157,14 @@ ENGINE_REGISTRY: Dict[str, EngineCapabilities] = {
         fallback_languages=["English"],
     ),
 
+    "dramabox": EngineCapabilities(
+        supports_voice_conversion=False,
+        multilingual_model_switching=False,
+        can_corrupt_on_reload=False,
+        fallback_languages=["English"],
+        supports_runtime_isolation=False,
+    ),
+
     "fish_audio_s2": EngineCapabilities(
         supports_voice_conversion=False,
         multilingual_model_switching=False,

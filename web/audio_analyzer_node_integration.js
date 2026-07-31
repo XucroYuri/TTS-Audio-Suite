@@ -265,7 +265,7 @@ export class AudioAnalyzerNodeIntegration {
     }
     
     // Trigger node execution
-    triggerNodeExecution() {
+    async triggerNodeExecution() {
         if (this.isAnalyzing) {
             console.log('Analysis already in progress');
             return;
@@ -274,14 +274,16 @@ export class AudioAnalyzerNodeIntegration {
         this.isAnalyzing = true;
         
         try {
-            // Queue the node for execution
-            if (this.core.node.graph && this.core.node.graph.runStep) {
-                this.core.node.graph.runStep([this.core.node]);
-            } else {
-                // Fallback: manually trigger execution
-                console.log('Triggering manual node execution');
-                this.core.node.doExecute?.();
-            }
+            // Queue backend execution through ComfyUI. Legacy LiteGraph execution
+            // methods do not execute Python nodes and are being removed upstream.
+            this.core.node.audioAnalyzerForceRun = Date.now();
+            this.core.node.lastExecutionTime = Date.now();
+            await window.app.queuePrompt();
+
+            // Check for results after execution in case the normal execution hook
+            // does not deliver the output to the analyzer interface immediately.
+            setTimeout(() => this.core.node.checkForResults(), 3000);
+            setTimeout(() => this.core.node.checkForResults(), 6000);
         } catch (error) {
             console.error('Failed to trigger node execution:', error);
             this.core.showMessage(`Execution error: ${error.message}`);

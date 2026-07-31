@@ -146,7 +146,7 @@ Hello! This is unified SRT TTS with character switching.
                 }),
                 "use_native_duration_targeting": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "When enabled, supported engines like OmniVoice use the model's native duration parameter for each subtitle during generation. This helps the model aim closer to the subtitle length before the suite applies final timing adjustment, which can reduce stretching/compression and sound more natural."
+                    "tooltip": "When enabled, supported engines such as OmniVoice and DramaBox use the model's native duration parameter for each subtitle during generation. This helps the model aim closer to the subtitle length before the suite applies final timing adjustment, which can reduce stretching/compression and sound more natural."
                 }),
             }
         }
@@ -265,7 +265,7 @@ Hello! This is unified SRT TTS with character switching.
                 stable_params['runtime_mode'] = config.get('runtime_mode', 'shared_runtime')
                 stable_params['runtime_profile'] = config.get('runtime_profile')
 
-            # For ChatterBox Official 23-Lang, include model_version in cache key since v1/v2 are different models
+            # ChatterBox multilingual T3 versions are distinct checkpoints.
             if engine_type == "chatterbox_official_23lang":
                 stable_params['model_version'] = config.get('model_version', 'v1')
 
@@ -293,6 +293,13 @@ Hello! This is unified SRT TTS with character switching.
                 stable_params['precision'] = config.get('precision', 'auto')
                 stable_params['optimize'] = config.get('optimize', False)
                 stable_params['max_generate_length'] = config.get('max_generate_length', 500)
+
+            if engine_type == "dramabox":
+                stable_params['model_name'] = config.get('model_name', 'DramaBox')
+                stable_params['precision'] = config.get('precision', 'auto')
+                stable_params['memory_mode'] = config.get('memory_mode', 'fast')
+                stable_params['transformer_quantization'] = config.get('transformer_quantization', 'none')
+                stable_params['compile_model'] = config.get('compile_model', False)
 
             if engine_type == "fish_audio_s2":
                 stable_params['model_variant'] = config.get('model_variant', 's2-pro')
@@ -674,6 +681,52 @@ Hello! This is unified SRT TTS with character switching.
 
                 engine_instance = DotsTTSSRTWrapper(config)
 
+                import time
+                self._cached_engine_instances[cache_key] = {
+                    'instance': engine_instance,
+                    'timestamp': time.time()
+                }
+                return engine_instance
+
+            elif engine_type == "dramabox":
+                processor_path = os.path.join(
+                    nodes_dir, "dramabox", "dramabox_srt_processor.py"
+                )
+                processor_spec = importlib.util.spec_from_file_location(
+                    "dramabox_srt_processor_module", processor_path
+                )
+                processor_module = importlib.util.module_from_spec(processor_spec)
+                processor_spec.loader.exec_module(processor_module)
+                DramaBoxSRTProcessor = processor_module.DramaBoxSRTProcessor
+
+                class DramaBoxSRTWrapper:
+                    def __init__(self, cfg):
+                        self.config = cfg.copy()
+                        self.processor = DramaBoxSRTProcessor(self, self.config)
+
+                    def update_config(self, new_config):
+                        self.config = new_config.copy()
+                        self.processor.update_config(new_config)
+
+                    def process_with_error_handling(self, func):
+                        return func()
+
+                    def format_audio_output(self, audio_tensor, sample_rate):
+                        if audio_tensor.is_cuda:
+                            audio_tensor = audio_tensor.cpu()
+                        if audio_tensor.dim() == 1:
+                            audio_tensor = audio_tensor.unsqueeze(0).unsqueeze(0)
+                        elif audio_tensor.dim() == 2:
+                            audio_tensor = audio_tensor.unsqueeze(0)
+                        return {"waveform": audio_tensor, "sample_rate": sample_rate}
+
+                    def check_interrupt(self):
+                        if model_management.interrupt_processing:
+                            raise InterruptedError(
+                                "DramaBox SRT processing interrupted by user"
+                            )
+
+                engine_instance = DramaBoxSRTWrapper(config)
                 import time
                 self._cached_engine_instances[cache_key] = {
                     'instance': engine_instance,
@@ -1216,11 +1269,13 @@ Hello! This is unified SRT TTS with character switching.
             print(f"📺 TTS SRT: Starting {engine_type} SRT generation")
 
             native_duration_targeting_active = bool(
-                use_native_duration_targeting and engine_type == "omnivoice"
+                use_native_duration_targeting
+                and engine_type in {"omnivoice", "dramabox"}
             )
             if use_native_duration_targeting and not native_duration_targeting_active:
                 print(
-                    f"ℹ️ Native duration targeting is currently supported only for OmniVoice in TTS SRT. "
+                    f"ℹ️ Native duration targeting is currently supported only for "
+                    f"OmniVoice and DramaBox in TTS SRT. "
                     f"Ignoring it for engine '{engine_type}'."
                 )
             
@@ -1437,6 +1492,30 @@ Hello! This is unified SRT TTS with character switching.
                     timing_mode=timing_mode,
                     timing_params=timing_params,
                     enable_audio_cache=enable_audio_cache
+                )
+
+            elif engine_type == "dramabox":
+                timing_params = {
+                    'fade_for_StretchToFit': fade_for_StretchToFit,
+                    'max_stretch_ratio': max_stretch_ratio,
+                    'min_stretch_ratio': min_stretch_ratio,
+                    'timing_tolerance': timing_tolerance,
+                    'use_native_duration_targeting': native_duration_targeting_active,
+                }
+                voice_mapping = {}
+                if audio_tensor is not None or audio_path:
+                    voice_mapping['narrator'] = {
+                        'audio': audio_tensor,
+                        'audio_path': audio_path,
+                        'reference_text': reference_text or "",
+                    }
+                result = engine_instance.processor.process_srt_content(
+                    srt_content=srt_content,
+                    voice_mapping=voice_mapping,
+                    seed=seed,
+                    timing_mode=timing_mode,
+                    timing_params=timing_params,
+                    enable_audio_cache=enable_audio_cache,
                 )
 
             elif engine_type == "fish_audio_s2":
