@@ -210,19 +210,6 @@ def _install_optional_dependency_stubs():
     sys.modules["audio_separator"] = audio_separator
     sys.modules["audio_separator.separator"] = audio_separator_separator
 
-    scipy = types.ModuleType("scipy")
-    scipy.__spec__ = importlib.machinery.ModuleSpec("scipy", loader=None)
-    scipy_io = types.ModuleType("scipy.io")
-    scipy_io.__spec__ = importlib.machinery.ModuleSpec("scipy.io", loader=None)
-    scipy_wavfile = types.ModuleType("scipy.io.wavfile")
-    scipy_wavfile.__spec__ = importlib.machinery.ModuleSpec("scipy.io.wavfile", loader=None)
-    scipy_wavfile.write = lambda *args, **kwargs: None
-    scipy_io.wavfile = scipy_wavfile
-    scipy.io = scipy_io
-    sys.modules["scipy"] = scipy
-    sys.modules["scipy.io"] = scipy_io
-    sys.modules["scipy.io.wavfile"] = scipy_wavfile
-
     rvc_audio = types.ModuleType("rvc_audio")
     rvc_audio.audio_to_bytes = lambda *args, **kwargs: b""
     rvc_audio.save_input_audio = lambda *args, **kwargs: None
