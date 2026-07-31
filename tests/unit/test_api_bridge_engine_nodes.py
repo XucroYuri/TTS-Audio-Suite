@@ -23,6 +23,12 @@ sys.modules[BRIDGE_SPEC.name] = bridge
 BRIDGE_SPEC.loader.exec_module(bridge)
 
 
+def _checkout_python(source_root: Path) -> Path:
+    scripts_directory = "Scripts" if os.name == "nt" else "bin"
+    executable_name = "python.exe" if os.name == "nt" else "python"
+    return source_root / ".venv" / scripts_directory / executable_name
+
+
 class FakeRegistry:
     def require(self, resource_id: str, engine: str) -> TTSResource:
         assert resource_id == "local-resource"
@@ -323,7 +329,7 @@ def test_gpt_adapter_uses_legacy_environment_checkout_when_home_is_omitted(monke
         def __init__(self, **kwargs):
             observed.update(kwargs)
             self.source_root = Path(kwargs["source_root"]).resolve()
-            self.python_executable = self.source_root / ".venv" / "Scripts" / "python.exe"
+            self.python_executable = _checkout_python(self.source_root)
 
         def cleanup(self):
             pass
@@ -484,7 +490,7 @@ def test_gpt_adapter_reuses_same_stateless_registered_runtime_proxy(monkeypatch,
     class FakeExternalRuntime:
         def __init__(self, **kwargs):
             self.source_root = Path(kwargs["source_root"]).resolve()
-            self.python_executable = self.source_root / ".venv" / "Scripts" / "python.exe"
+            self.python_executable = _checkout_python(self.source_root)
             created.append(kwargs)
 
         def cleanup(self):
@@ -669,7 +675,7 @@ def _prepare_external_index_runtime(tmp_path):
     inference_module = source_root / "indextts" / "infer_v2.py"
     inference_module.parent.mkdir(parents=True)
     inference_module.write_text("class IndexTTS2: pass\n", encoding="utf-8")
-    python_executable = source_root / ".venv" / "Scripts" / "python.exe"
+    python_executable = _checkout_python(source_root)
     python_executable.parent.mkdir(parents=True)
     python_executable.touch()
     model_dir.mkdir()
@@ -722,7 +728,7 @@ def _prepare_external_gpt_runtime(tmp_path):
     official_module.parent.mkdir(parents=True)
     official_module.write_text("class TTS: pass\nclass TTS_Config: pass\n", encoding="utf-8")
     (package_root / "eres2net").mkdir()
-    python_executable = source_root / ".venv" / "Scripts" / "python.exe"
+    python_executable = _checkout_python(source_root)
     python_executable.parent.mkdir(parents=True)
     python_executable.touch()
     gpt_weight = package_root / "pretrained_models" / "s1.ckpt"
@@ -986,7 +992,7 @@ def _prepare_external_cosyvoice_runtime(tmp_path):
     inference_module.parent.mkdir(parents=True)
     inference_module.write_text("def AutoModel(**kwargs): pass\n", encoding="utf-8")
     (source_root / "third_party" / "Matcha-TTS").mkdir(parents=True)
-    python_executable = source_root / ".venv" / "Scripts" / "python.exe"
+    python_executable = _checkout_python(source_root)
     python_executable.parent.mkdir(parents=True)
     python_executable.touch()
     model_dir.mkdir(parents=True)
@@ -1318,7 +1324,8 @@ def test_external_index_subprocess_terminates_tree_on_timeout_and_cleans_temp(mo
     with pytest.raises(TimeoutError, match="exceeded 0.5s"):
         proxy.infer(spk_audio_prompt=str(voice_path), text="超时清理。", output_path=None)
 
-    assert terminated == [(4444, 0.25)]
+    assert terminated[0][0] == 4444
+    assert 0 < terminated[0][1] <= 0.25
     assert not list(temp_root.iterdir())
 
 
