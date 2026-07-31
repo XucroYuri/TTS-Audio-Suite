@@ -707,7 +707,7 @@ def test_external_wait_interrupts_and_cleans_tree(monkeypatch):
     def cleanup(process):
         process.returncode = -9
         cleaned.append(process)
-        return "partial", "", "tree exited"
+        return "partial", "", "tree exited", True
 
     monkeypatch.setattr(proxy, "_cleanup_timed_out_process", cleanup)
     process = Running()
@@ -735,10 +735,42 @@ def test_external_wait_reports_cleanup_failure_instead_of_false_interrupt_succes
     monkeypatch.setattr(
         proxy,
         "_cleanup_timed_out_process",
-        lambda process: ("", "", "process exit could not be verified"),
+        lambda process: ("", "", "process exit could not be verified", False),
     )
     with pytest.raises(RuntimeError, match="interruption cleanup failed"):
         proxy._communicate_with_control(Stuck(), "IndexTTS")
+
+
+def test_external_wait_rejects_unverified_tree_when_windows_job_close_fails(monkeypatch):
+    module = _load_external_index_subprocess_module()
+    proxy = object.__new__(module.ExternalIndexTTSSubprocessProxy)
+    proxy.timeout_seconds = 10.0
+    proxy.termination_grace_seconds = 0.2
+    proxy.interrupt_check = lambda: True
+
+    class ExitedParent:
+        pid = 5252
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        @staticmethod
+        def communicate(timeout=None):
+            return "", ""
+
+    process = ExitedParent()
+
+    class BrokenJob:
+        def close(self):
+            process.returncode = -9
+            raise OSError("job handle close failed")
+
+    process._tts_windows_job = BrokenJob()
+    monkeypatch.setattr(module.os, "name", "nt")
+
+    with pytest.raises(RuntimeError, match="interruption cleanup failed"):
+        proxy._communicate_with_control(process, "IndexTTS")
 
 
 def test_external_wait_preserves_timeout_category(monkeypatch):
@@ -754,7 +786,11 @@ def test_external_wait_preserves_timeout_category(monkeypatch):
         def communicate(self, timeout=None):
             raise module.subprocess.TimeoutExpired("runner", timeout)
 
-    monkeypatch.setattr(proxy, "_cleanup_timed_out_process", lambda process: ("", "slow", "tree exited"))
+    monkeypatch.setattr(
+        proxy,
+        "_cleanup_timed_out_process",
+        lambda process: ("", "slow", "tree exited", True),
+    )
     with pytest.raises(TimeoutError, match="exceeded 0.01s"):
         proxy._communicate_with_control(Running(), "IndexTTS")
 

@@ -354,13 +354,16 @@ class ExternalIndexTTSSubprocessProxy:
         job = getattr(process, "_tts_windows_job", None)
         if job is None:
             return False
-        job.close()
-        setattr(process, "_tts_windows_job", None)
+        try:
+            job.close()
+        finally:
+            setattr(process, "_tts_windows_job", None)
         return True
 
-    def _cleanup_timed_out_process(self, process) -> tuple[str, str, str]:
+    def _cleanup_timed_out_process(self, process) -> tuple[str, str, str, bool]:
         """Best-effort bounded cleanup that never replaces the primary timeout."""
         notes: list[str] = []
+        tree_exit_verified = False
         deadline = time.monotonic() + self.termination_grace_seconds
         try:
             tree_diagnostic = self._terminate_process_tree(
@@ -370,6 +373,7 @@ class ExternalIndexTTSSubprocessProxy:
                     max(0.0, deadline - time.monotonic()),
                 ),
             )
+            tree_exit_verified = True
             if tree_diagnostic:
                 notes.append(str(tree_diagnostic))
         except Exception as exc:
@@ -404,25 +408,24 @@ class ExternalIndexTTSSubprocessProxy:
         try:
             if process.poll() is None:
                 notes.append("process exit could not be verified")
+                tree_exit_verified = False
         except Exception as exc:
             notes.append(f"final process status check failed: {exc}")
-        return stdout, stderr, "; ".join(notes)
+            tree_exit_verified = False
+        return stdout, stderr, "; ".join(notes), tree_exit_verified
 
     def _communicate_with_control(self, process, engine_label: str) -> tuple[str, str]:
         deadline = time.monotonic() + self.timeout_seconds
         timeout_error: subprocess.TimeoutExpired | None = None
         while True:
             if self.interrupt_check():
-                stdout, stderr, cleanup = self._cleanup_timed_out_process(process)
+                stdout, stderr, cleanup, tree_exit_verified = (
+                    self._cleanup_timed_out_process(process)
+                )
                 diagnostic = (stderr or stdout or "interrupted").strip()
                 if cleanup:
                     diagnostic = f"{diagnostic}; cleanup: {cleanup}"
-                try:
-                    exit_verified = process.poll() is not None
-                except Exception as exc:
-                    exit_verified = False
-                    diagnostic = f"{diagnostic}; final status check failed: {exc}"
-                if not exit_verified:
+                if not tree_exit_verified:
                     _clear_processing_interrupt()
                     raise RuntimeError(
                         f"{engine_label} interruption cleanup failed: {diagnostic}"
@@ -430,7 +433,9 @@ class ExternalIndexTTSSubprocessProxy:
                 _raise_processing_interrupted(engine_label, diagnostic)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                stdout, stderr, cleanup = self._cleanup_timed_out_process(process)
+                stdout, stderr, cleanup, _tree_exit_verified = (
+                    self._cleanup_timed_out_process(process)
+                )
                 diagnostic = (stderr or stdout or str(timeout_error or "deadline exceeded")).strip()
                 if cleanup:
                     diagnostic = f"{diagnostic}; cleanup: {cleanup}"
@@ -499,7 +504,7 @@ class ExternalIndexTTSSubprocessProxy:
             return True
 
     @staticmethod
-    def _bounded_windows_fallback(process, deadline: float, notes: list[str]) -> None:
+    def _bounded_windows_fallback(process, deadline: float, notes: list[str]) -> bool:
         """Suspend parents before direct snapshots so the discovered tree is stable."""
         if not ExternalIndexTTSSubprocessProxy._remaining_before(
             deadline,
@@ -510,7 +515,7 @@ class ExternalIndexTTSSubprocessProxy:
         try:
             pending = deque([psutil.Process(process.pid)])
         except psutil.NoSuchProcess:
-            return
+            return False
         except Exception as exc:
             notes.append(f"opening root PID {process.pid} failed: {exc}")
             raise RuntimeError("; ".join(notes)) from exc
@@ -666,15 +671,17 @@ class ExternalIndexTTSSubprocessProxy:
                     [*notes, f"process-tree PIDs still alive: {', '.join(map(str, survivors))}"]
                 )
             )
+        return True
 
     @staticmethod
     def _terminate_process_tree(process, grace_seconds: float) -> str:
         if process.poll() is not None:
-            return ""
+            raise RuntimeError("process tree exit could not be verified after root exit")
         if grace_seconds <= 0:
             raise TimeoutError("process-tree termination deadline was already exhausted")
         deadline = time.monotonic() + grace_seconds
         notes: list[str] = []
+        tree_exit_verified = False
         if os.name == "nt":
             if getattr(process, "_tts_windows_job", None) is not None:
                 if not ExternalIndexTTSSubprocessProxy._remaining_before(
@@ -686,6 +693,7 @@ class ExternalIndexTTSSubprocessProxy:
                 try:
                     ExternalIndexTTSSubprocessProxy._close_windows_job(process)
                     notes.append("Windows Job Object closed with kill-on-close")
+                    tree_exit_verified = True
                 except Exception as exc:
                     notes.append(f"Windows Job Object close failed: {exc}")
 
@@ -714,6 +722,8 @@ class ExternalIndexTTSSubprocessProxy:
                             result.stderr or result.stdout or "taskkill failed"
                         ).strip()
                         notes.append(f"taskkill failed ({result.returncode}): {diagnostic}")
+                    else:
+                        tree_exit_verified = True
                 except subprocess.TimeoutExpired:
                     taskkill_failed = True
                     notes.append(f"taskkill exceeded {taskkill_timeout:g}s")
@@ -721,16 +731,21 @@ class ExternalIndexTTSSubprocessProxy:
                     taskkill_failed = True
                     notes.append(f"taskkill invocation failed: {exc}")
                 if taskkill_failed or process.poll() is None:
-                    ExternalIndexTTSSubprocessProxy._bounded_windows_fallback(
-                        process,
-                        deadline,
-                        notes,
+                    tree_exit_verified = (
+                        ExternalIndexTTSSubprocessProxy._bounded_windows_fallback(
+                            process,
+                            deadline,
+                            notes,
+                        )
+                        or tree_exit_verified
                     )
         else:
             try:
                 os.killpg(os.getpgid(process.pid), signal.SIGKILL)
             except ProcessLookupError:
-                return ""
+                tree_exit_verified = True
+            else:
+                tree_exit_verified = True
         if process.poll() is None:
             remaining = ExternalIndexTTSSubprocessProxy._remaining_before(
                 deadline,
@@ -749,6 +764,10 @@ class ExternalIndexTTSSubprocessProxy:
             except Exception as exc:
                 diagnostic = "; ".join(notes) if notes else "no child diagnostics"
                 raise RuntimeError(f"process tree wait failed: {exc}; {diagnostic}") from exc
+        if not tree_exit_verified:
+            raise RuntimeError(
+                "; ".join([*notes, "process tree exit could not be verified"])
+            )
         return "; ".join(notes)
 
     def to(self, device):
