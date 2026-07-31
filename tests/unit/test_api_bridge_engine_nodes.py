@@ -257,6 +257,144 @@ def test_registered_cosyvoice_adapter_executes_external_engine_on_every_call():
 
 
 @pytest.mark.unit
+def test_gpt_adapter_uses_registered_checkout_runtime_without_inprocess_import(monkeypatch, tmp_path):
+    import engines.adapters.gpt_sovits_adapter as adapter_module
+
+    observed = {}
+
+    class FakeExternalRuntime:
+        source_root = tmp_path / "gpt-source"
+
+        def __init__(self, **kwargs):
+            observed.update(kwargs)
+
+        def cleanup(self):
+            pass
+
+    monkeypatch.setattr(
+        adapter_module,
+        "ExternalGPTSovitsSubprocessProxy",
+        FakeExternalRuntime,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        adapter_module.GPTSovitsAdapter,
+        "_import_official_runtime",
+        lambda self: (_ for _ in ()).throw(
+            AssertionError("registered GPT-SoVITS must not import official modules in ComfyUI")
+        ),
+    )
+    adapter = adapter_module.GPTSovitsAdapter()
+    adapter.initialize_engine(
+        gpt_weight="C:/gpt/s1.ckpt",
+        sovits_weight="C:/gpt/s2.pth",
+        bert_path="C:/gpt/bert",
+        cnhubert_path="C:/gpt/cnhubert",
+        device="cpu",
+        use_fp16=False,
+        gpt_sovits_home="C:/gpt/source",
+        version="v2",
+    )
+
+    assert observed == {
+        "source_root": "C:/gpt/source",
+        "gpt_weight": "C:/gpt/s1.ckpt",
+        "sovits_weight": "C:/gpt/s2.pth",
+        "bert_path": "C:/gpt/bert",
+        "cnhubert_path": "C:/gpt/cnhubert",
+        "device": "cpu",
+        "use_fp16": False,
+        "version": "v2",
+    }
+
+
+@pytest.mark.unit
+def test_gpt_adapter_reuses_same_stateless_registered_runtime_proxy(monkeypatch, tmp_path):
+    import engines.adapters.gpt_sovits_adapter as adapter_module
+
+    created = []
+    source_root = tmp_path / "gpt-source"
+
+    class FakeExternalRuntime:
+        def __init__(self, **kwargs):
+            self.source_root = Path(kwargs["source_root"]).resolve()
+            created.append(kwargs)
+
+        def cleanup(self):
+            pass
+
+    monkeypatch.setattr(adapter_module, "ExternalGPTSovitsSubprocessProxy", FakeExternalRuntime)
+    adapter = adapter_module.GPTSovitsAdapter()
+    arguments = {
+        "gpt_weight": "C:/gpt/s1.ckpt",
+        "sovits_weight": "C:/gpt/s2.pth",
+        "bert_path": "C:/gpt/bert",
+        "cnhubert_path": "C:/gpt/cnhubert",
+        "device": "cpu",
+        "use_fp16": False,
+        "gpt_sovits_home": str(source_root),
+        "version": "v2",
+    }
+
+    adapter.initialize_engine(**arguments)
+    adapter.initialize_engine(**arguments)
+
+    assert len(created) == 1
+
+
+@pytest.mark.unit
+def test_registered_gpt_adapter_executes_one_shot_runtime_on_every_call():
+    import engines.adapters.gpt_sovits_adapter as adapter_module
+
+    runs = []
+    cache_reads = []
+    cache_writes = []
+
+    class FakeExternalRuntime:
+        source_root = "C:/gpt/source"
+
+        def run(self, inputs):
+            runs.append(inputs)
+            return 32000, adapter_module.np.full(3200, len(runs), dtype=adapter_module.np.int16)
+
+    class CoarseSharedCache:
+        def generate_cache_key(self, *args, **kwargs):
+            return "same-key"
+
+        def get_cached_audio(self, cache_key):
+            cache_reads.append(cache_key)
+            return adapter_module.torch.zeros(1, 3200), 0.1
+
+        def cache_audio(self, *args):
+            cache_writes.append(args)
+
+    adapter = adapter_module.GPTSovitsAdapter(audio_cache=CoarseSharedCache())
+    adapter.runtime = FakeExternalRuntime()
+    adapter._current_gpt_path = "C:/gpt/s1.ckpt"
+    adapter._current_sovits_path = "C:/gpt/s2.pth"
+
+    first, first_rate = adapter.generate(
+        text="same request",
+        ref_audio_path="C:/voice.wav",
+        ref_text="reference",
+        seed=7,
+    )
+    second, second_rate = adapter.generate(
+        text="same request",
+        ref_audio_path="C:/voice.wav",
+        ref_text="reference",
+        seed=7,
+    )
+
+    assert len(runs) == 2
+    assert first_rate == second_rate == 32000
+    assert adapter_module.torch.count_nonzero(first).item() == 3200
+    assert adapter_module.torch.count_nonzero(second).item() == 3200
+    assert cache_reads == []
+    assert cache_writes == []
+
+
+@pytest.mark.unit
 def test_registered_cosyvoice_runtime_identities_cannot_share_waveform_cache():
     import engines.adapters.cosyvoice_adapter as adapter_module
 
@@ -388,6 +526,246 @@ def _load_external_cosyvoice_subprocess_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _load_external_gpt_subprocess_module():
+    path = REPO_ROOT / "engines" / "gpt_sovits" / "external_subprocess.py"
+    assert path.is_file(), "plugin-owned external GPT-SoVITS subprocess adapter is missing"
+    spec = importlib.util.spec_from_file_location("external_gpt_subprocess_test", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_external_gpt_runner_module():
+    path = REPO_ROOT / "engines" / "gpt_sovits" / "external_subprocess_runner.py"
+    assert path.is_file(), "plugin-owned external GPT-SoVITS subprocess runner is missing"
+    spec = importlib.util.spec_from_file_location("external_gpt_runner_test", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _prepare_external_gpt_runtime(tmp_path):
+    source_root = tmp_path / "gpt-source"
+    package_root = source_root / "GPT_SoVITS"
+    official_module = package_root / "TTS_infer_pack" / "TTS.py"
+    official_module.parent.mkdir(parents=True)
+    official_module.write_text("class TTS: pass\nclass TTS_Config: pass\n", encoding="utf-8")
+    (package_root / "eres2net").mkdir()
+    python_executable = source_root / ".venv" / "Scripts" / "python.exe"
+    python_executable.parent.mkdir(parents=True)
+    python_executable.touch()
+    gpt_weight = package_root / "pretrained_models" / "s1.ckpt"
+    sovits_weight = package_root / "pretrained_models" / "s2.pth"
+    bert_path = package_root / "pretrained_models" / "bert"
+    cnhubert_path = package_root / "pretrained_models" / "cnhubert"
+    gpt_weight.parent.mkdir(parents=True)
+    gpt_weight.touch()
+    sovits_weight.touch()
+    bert_path.mkdir()
+    cnhubert_path.mkdir()
+    voice_path = source_root / "voice.wav"
+    with wave.open(str(voice_path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x01\x00" * 160)
+    temp_root = tmp_path / "temp"
+    temp_root.mkdir()
+    return (
+        source_root,
+        python_executable,
+        gpt_weight,
+        sovits_weight,
+        bert_path,
+        cnhubert_path,
+        voice_path,
+        temp_root,
+    )
+
+
+@pytest.mark.unit
+def test_external_gpt_subprocess_preserves_registered_lineage_offline_and_cleans_temp(
+    monkeypatch, tmp_path
+):
+    module = _load_external_gpt_subprocess_module()
+    (
+        source_root,
+        python_executable,
+        gpt_weight,
+        sovits_weight,
+        bert_path,
+        cnhubert_path,
+        voice_path,
+        temp_root,
+    ) = _prepare_external_gpt_runtime(tmp_path)
+    observed = {}
+
+    class FakeProcess:
+        pid = 6242
+        returncode = 0
+
+        def __init__(self, command, **kwargs):
+            observed["command"] = command
+            observed["kwargs"] = kwargs
+
+        def communicate(self, timeout):
+            observed["timeout"] = timeout
+            manifest = json.loads(Path(observed["command"][2]).read_text(encoding="utf-8"))
+            observed["manifest"] = manifest
+            with wave.open(manifest["output_path"], "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(32000)
+                handle.writeframes(b"\x10\x00" * 320)
+            return "official stdout", ""
+
+    monkeypatch.setattr(module.subprocess, "Popen", FakeProcess)
+    proxy = module.ExternalGPTSovitsSubprocessProxy(
+        source_root=source_root,
+        gpt_weight=gpt_weight,
+        sovits_weight=sovits_weight,
+        bert_path=bert_path,
+        cnhubert_path=cnhubert_path,
+        device="cuda",
+        use_fp16=True,
+        version="v2",
+        timeout_seconds=321.0,
+        temp_root=temp_root,
+    )
+
+    sample_rate, samples = proxy.run(
+        {
+            "text": "real external inference",
+            "text_lang": "en",
+            "ref_audio_path": str(voice_path),
+            "prompt_text": "exact reference",
+            "prompt_lang": "en",
+            "seed": 7,
+        }
+    )
+
+    assert observed["command"][0] == str(python_executable)
+    assert Path(observed["command"][1]).name == "external_subprocess_runner.py"
+    assert observed["kwargs"]["cwd"] == str(source_root)
+    assert observed["timeout"] == 321.0
+    child_environment = observed["kwargs"]["env"]
+    assert child_environment["TTS_AUDIO_SUITE_OFFLINE"] == "1"
+    assert child_environment["HF_HUB_OFFLINE"] == "1"
+    assert child_environment["PYTHONNOUSERSITE"] == "1"
+    manifest = observed["manifest"]
+    assert manifest["source_root"] == str(source_root)
+    assert manifest["runtime_config_path"].startswith(str(temp_root))
+    assert manifest["config"] == {
+        "gpt_weight": str(gpt_weight),
+        "sovits_weight": str(sovits_weight),
+        "bert_path": str(bert_path),
+        "cnhubert_path": str(cnhubert_path),
+        "device": "cuda",
+        "use_fp16": True,
+        "version": "v2",
+    }
+    assert manifest["inference"]["prompt_text"] == "exact reference"
+    assert sample_rate == 32000
+    assert samples.shape == (320,)
+    assert not list(temp_root.iterdir())
+
+
+@pytest.mark.unit
+def test_external_gpt_runner_imports_registered_source_and_writes_only_temp_config(
+    monkeypatch, tmp_path
+):
+    module = _load_external_gpt_runner_module()
+    (
+        source_root,
+        _,
+        gpt_weight,
+        sovits_weight,
+        bert_path,
+        cnhubert_path,
+        voice_path,
+        temp_root,
+    ) = _prepare_external_gpt_runtime(tmp_path)
+    output_path = temp_root / "result.wav"
+    runtime_config_path = temp_root / "runtime-config.yaml"
+    manifest_path = temp_root / "request.json"
+    payload = {
+        "source_root": str(source_root),
+        "output_path": str(output_path),
+        "runtime_config_path": str(runtime_config_path),
+        "config": {
+            "gpt_weight": str(gpt_weight),
+            "sovits_weight": str(sovits_weight),
+            "bert_path": str(bert_path),
+            "cnhubert_path": str(cnhubert_path),
+            "device": "cuda",
+            "use_fp16": True,
+            "version": "v2",
+        },
+        "inference": {
+            "text": "real runner inference",
+            "text_lang": "en",
+            "ref_audio_path": str(voice_path),
+            "prompt_text": "exact reference",
+            "prompt_lang": "en",
+            "seed": 7,
+        },
+    }
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    observed = {}
+
+    package = types.ModuleType("TTS_infer_pack")
+    package.__path__ = [str(source_root / "GPT_SoVITS" / "TTS_infer_pack")]
+    official = types.ModuleType("TTS_infer_pack.TTS")
+    official.__file__ = str(source_root / "GPT_SoVITS" / "TTS_infer_pack" / "TTS.py")
+
+    class FakeConfig:
+        def __init__(self, configs):
+            observed["config"] = configs
+            self.configs_path = "must-be-replaced"
+
+    class FakeTTS:
+        def __init__(self, config):
+            observed["runtime_config_path"] = config.configs_path
+            sock = module.socket.socket()
+            try:
+                sock.connect(("203.0.113.1", 443))
+            except RuntimeError as exc:
+                observed["network_error"] = str(exc)
+            finally:
+                sock.close()
+
+        def run(self, inputs):
+            observed["inference"] = inputs
+            return 32000, module.np.full(320, 1000, dtype=module.np.int16)
+
+    official.TTS_Config = FakeConfig
+    official.TTS = FakeTTS
+    monkeypatch.setitem(sys.modules, "TTS_infer_pack", package)
+    monkeypatch.setitem(sys.modules, "TTS_infer_pack.TTS", official)
+
+    assert module.main([str(manifest_path)]) == 0
+
+    samples, sample_rate = module.soundfile.read(output_path, dtype="float32")
+    assert sample_rate == 32000
+    assert samples.size == 320
+    assert observed["config"] == {
+        "custom": {
+            "device": "cuda",
+            "is_half": True,
+            "version": "v2",
+            "t2s_weights_path": str(gpt_weight),
+            "vits_weights_path": str(sovits_weight),
+            "bert_base_path": str(bert_path),
+            "cnhuhbert_base_path": str(cnhubert_path),
+        }
+    }
+    assert observed["runtime_config_path"] == str(runtime_config_path)
+    assert observed["inference"] == payload["inference"]
+    assert "network access is disabled" in observed["network_error"]
 
 
 def _load_external_cosyvoice_runner_module():
