@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import math
 from pathlib import Path
 import sys
 import types
@@ -171,6 +172,44 @@ def test_index_adapter_builds_engine_for_registered_checkout(monkeypatch):
 
     assert initialized["model_dir"] == "C:/index/model"
     assert initialized["source_root"] == "C:/index/source"
+
+
+@pytest.mark.unit
+def test_registered_index_adapter_does_not_return_global_audio_cache(monkeypatch):
+    import engines.adapters.index_tts_adapter as adapter_module
+
+    generated = []
+    cached = []
+
+    class FakeExternalEngine:
+        source_root = "C:/index/source"
+
+        def generate(self, **kwargs):
+            generated.append(kwargs)
+            return adapter_module.torch.ones(1, 2205)
+
+        def unload(self):
+            pass
+
+    class FakeAudioCache:
+        def generate_cache_key(self, *args, **kwargs):
+            return "existing-result"
+
+        def get_cached_audio(self, cache_key):
+            return (adapter_module.torch.zeros(1, 2205), 0.1)
+
+        def cache_audio(self, *args):
+            cached.append(args)
+
+    adapter = adapter_module.IndexTTSAdapter.__new__(adapter_module.IndexTTSAdapter)
+    adapter.engine = FakeExternalEngine()
+    adapter.audio_cache = FakeAudioCache()
+
+    audio = adapter.generate(text="must execute", seed=1)
+
+    assert len(generated) == 1
+    assert adapter_module.torch.count_nonzero(audio).item() == 2205
+    assert cached == []
 
 
 def _load_external_index_subprocess_module():
@@ -477,6 +516,21 @@ def _index_engine_data(changed_key=None, changed_value=None):
     if changed_key is not None:
         config[changed_key] = changed_value
     return {"engine_type": "index_tts", "config": config}
+
+
+@pytest.mark.unit
+def test_text_node_forces_each_registered_runtime_prompt_to_execute():
+    module = _load_unified_node("tts_text_node.py", "registered_runtime_is_changed_test")
+
+    changed = module.UnifiedTTSTextNode.IS_CHANGED(
+        TTS_engine=_index_engine_data(),
+        text="must execute",
+        narrator_voice="none",
+        seed=1,
+    )
+
+    assert isinstance(changed, float)
+    assert math.isnan(changed)
 
 
 @pytest.mark.unit

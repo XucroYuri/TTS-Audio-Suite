@@ -143,6 +143,16 @@ Back to the main narrator voice for the conclusion.""",
     _RUNTIME_OWNER = "text"
     _TARGET_RUNTIME_ENGINES = frozenset({"gpt_sovits", "index_tts", "cosyvoice"})
 
+    @classmethod
+    def IS_CHANGED(cls, TTS_engine, **_inputs):
+        """API Bridge requests are jobs, so each queued prompt must execute."""
+        if isinstance(TTS_engine, dict):
+            engine_type = TTS_engine.get("engine_type")
+            config = TTS_engine.get("config") or TTS_engine
+            if engine_type in cls._TARGET_RUNTIME_ENGINES and config.get("resource_id"):
+                return float("nan")
+        return False
+
     def __init__(self):
         super().__init__()
         self.chunker = ImprovedChatterBoxChunker()

@@ -33,6 +33,10 @@ class IndexTTSAdapter:
         """Initialize the IndexTTS-2 adapter."""
         self.engine = None
         self.audio_cache = get_audio_cache()
+
+    def _audio_cache_enabled(self) -> bool:
+        """Keep registered external runtimes observable across release/reload cycles."""
+        return not bool(getattr(self.engine, "source_root", None))
     
     def initialize_engine(self,
                          model_path: Optional[str] = None,
@@ -245,7 +249,8 @@ class IndexTTSAdapter:
         # print(f"🐛 IndexTTS-2 full cache key: {cache_key}")
         # print(f"🐛 IndexTTS-2 cache stats: {self.audio_cache.get_cache_stats()}")
 
-        cached_audio = self.audio_cache.get_cached_audio(cache_key)
+        cache_enabled = self._audio_cache_enabled()
+        cached_audio = self.audio_cache.get_cached_audio(cache_key) if cache_enabled else None
         if cached_audio:
             character_desc = character_name or 'narrator'
             print(f"💾 Using cached IndexTTS-2 audio for '{character_desc}': '{processed_text[:30]}...'")
@@ -318,7 +323,8 @@ class IndexTTSAdapter:
         else:
             # Cache the result for non-streaming mode
             duration = audio.shape[-1] / 22050.0  # IndexTTS-2 uses 22050 Hz
-            self.audio_cache.cache_audio(cache_key, audio, duration)
+            if cache_enabled:
+                self.audio_cache.cache_audio(cache_key, audio, duration)
             # print(f"💾 IndexTTS-2 CACHED audio with key: {cache_key}")
             return audio
     
@@ -441,7 +447,8 @@ class IndexTTSAdapter:
             )
 
             # Check cache first
-            cached_segment_audio = self.audio_cache.get_cached_audio(segment_cache_key)
+            cache_enabled = self._audio_cache_enabled()
+            cached_segment_audio = self.audio_cache.get_cached_audio(segment_cache_key) if cache_enabled else None
             if cached_segment_audio:
                 print(f"💾 Using cached IndexTTS-2 segment for '{resolved_character_label(character_name, speaker_audio)}': '{segment_text[:30]}...'")
                 segment_audio = cached_segment_audio[0]
@@ -463,7 +470,8 @@ class IndexTTSAdapter:
 
                 # Cache the segment result
                 duration = segment_audio.shape[-1] / 22050.0  # IndexTTS-2 uses 22050 Hz
-                self.audio_cache.cache_audio(segment_cache_key, segment_audio, duration)
+                if cache_enabled:
+                    self.audio_cache.cache_audio(segment_cache_key, segment_audio, duration)
                 # print(f"💾 IndexTTS-2 CACHED segment for '{character_name}' with key: {segment_cache_key}")
             
             audio_segments.append(segment_audio)
