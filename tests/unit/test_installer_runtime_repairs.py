@@ -1,4 +1,5 @@
 import importlib.util
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -54,6 +55,68 @@ def test_module_available_finds_nested_module_without_importing_parent(tmp_path,
 
     assert installer.module_available("dots_tts.runtime") is True
     assert "dots_tts" not in sys.modules
+
+
+@pytest.mark.unit
+def test_targets_profile_selects_only_api_bridge_target_engines(monkeypatch):
+    monkeypatch.setenv("TTS_AUDIO_SUITE_INSTALL_PROFILE", "tts_more_targets")
+
+    installer = INSTALL_MODULE.TTSAudioInstaller()
+
+    assert installer.install_profile == "tts_more_targets"
+    assert installer.active_engine_runtime_checks == (
+        ("GPT-SoVITS API Bridge (configuration)", ("api_bridge.resource_registry", "nodes.api_bridge.resource_engine_nodes")),
+        ("IndexTTS API Bridge (configuration)", ("api_bridge.resource_registry", "nodes.api_bridge.resource_engine_nodes")),
+        ("CosyVoice API Bridge (configuration)", ("api_bridge.resource_registry", "nodes.api_bridge.resource_engine_nodes")),
+    )
+    assert installer.optional_engine_installers_enabled is False
+
+
+@pytest.mark.unit
+def test_fresh_engine_probe_uses_a_subprocess(monkeypatch):
+    installer = INSTALL_MODULE.TTSAudioInstaller()
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, "OK\n", "")
+
+    monkeypatch.setattr(INSTALL_MODULE.subprocess, "run", fake_run)
+
+    assert installer.fresh_module_importable("api_bridge.resource_registry") is True
+    assert calls[0][0][0] == sys.executable
+    assert calls[0][0][1:3] == ["-c", "import importlib; importlib.import_module('api_bridge.resource_registry')"]
+
+
+@pytest.mark.unit
+def test_dependency_integrity_failure_is_reported(monkeypatch):
+    installer = INSTALL_MODULE.TTSAudioInstaller()
+    monkeypatch.setattr(
+        INSTALL_MODULE.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1, "", "broken requirement"),
+    )
+
+    assert installer.dependency_integrity_ok() is False
+
+
+@pytest.mark.unit
+def test_targets_profile_exits_nonzero_when_pip_check_fails(monkeypatch):
+    monkeypatch.setenv("TTS_AUDIO_SUITE_INSTALL_PROFILE", "tts_more_targets")
+    installer = INSTALL_MODULE.TTSAudioInstaller()
+    monkeypatch.setattr(INSTALL_MODULE, "TTSAudioInstaller", lambda: installer)
+    monkeypatch.setattr(installer, "check_python_environment", lambda: True)
+    monkeypatch.setattr(installer, "can_skip_dependency_installation", lambda: True)
+    monkeypatch.setattr(installer, "check_version_conflicts", lambda: None)
+    monkeypatch.setattr(installer, "validate_installation", lambda: True)
+    monkeypatch.setattr(installer, "dependency_integrity_ok", lambda: False)
+    monkeypatch.setattr(installer, "save_installation_state", lambda success: None)
+    monkeypatch.setattr(installer, "print_installation_summary", lambda success: None)
+
+    with pytest.raises(SystemExit) as error:
+        INSTALL_MODULE.main()
+
+    assert error.value.code == 1
 
 
 @pytest.mark.unit

@@ -51,6 +51,13 @@ class TTSAudioInstaller:
         ("Dots TTS", ("dots_tts.runtime",)),
         ("Fish Audio S2", ("fish_speech.inference_engine",)),
     )
+
+    TARGETS_PROFILE = "tts_more_targets"
+    TARGETS_ENGINE_RUNTIME_CHECKS = (
+        ("GPT-SoVITS API Bridge (configuration)", ("api_bridge.resource_registry", "nodes.api_bridge.resource_engine_nodes")),
+        ("IndexTTS API Bridge (configuration)", ("api_bridge.resource_registry", "nodes.api_bridge.resource_engine_nodes")),
+        ("CosyVoice API Bridge (configuration)", ("api_bridge.resource_registry", "nodes.api_bridge.resource_engine_nodes")),
+    )
     
     def __init__(self):
         self.python_version = sys.version_info
@@ -60,6 +67,13 @@ class TTSAudioInstaller:
         self.is_m1_mac = self.is_macos and platform.machine() == "arm64"
         self.pip_cmd = [sys.executable, "-m", "pip"]
         self.russian_stress_fork_ref = "git+https://github.com/diodiogod/add-stress-to-epub.git@98f53b9"
+        self.install_profile = os.environ.get("TTS_AUDIO_SUITE_INSTALL_PROFILE", "all_engines").strip().lower()
+        self.optional_engine_installers_enabled = self.install_profile != self.TARGETS_PROFILE
+        self.active_engine_runtime_checks = (
+            self.ENGINE_RUNTIME_CHECKS
+            if self.optional_engine_installers_enabled
+            else self.TARGETS_ENGINE_RUNTIME_CHECKS
+        )
         self.engine_validation_results = {}
         self.install_warnings = []
         
@@ -522,6 +536,52 @@ class TTSAudioInstaller:
         except (ImportError, ModuleNotFoundError, AttributeError, ValueError):
             return False
 
+    def fresh_module_importable(self, module_name: str) -> bool:
+        """Import an entry point in a child interpreter without loading models."""
+        command = [
+            sys.executable,
+            "-c",
+            f"import importlib; importlib.import_module({module_name!r})",
+        ]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            self.log(f"Fresh import probe failed for {module_name}: {error}", "ERROR")
+            return False
+        if result.returncode == 0:
+            return True
+        detail = (result.stderr or result.stdout or "unknown import error").strip()
+        self.log(f"Fresh import probe failed for {module_name}: {detail}", "ERROR")
+        return False
+
+    def dependency_integrity_ok(self) -> bool:
+        """Fail closed when pip reports an inconsistent shared environment."""
+        try:
+            result = subprocess.run(
+                self.pip_cmd + ["check"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            self.log(f"Could not verify dependency integrity: {error}", "ERROR")
+            return False
+        if result.returncode == 0:
+            self.log("Dependency integrity: OK", "SUCCESS")
+            return True
+        detail = (result.stdout or result.stderr or "pip check failed").strip()
+        self.log(f"Dependency integrity: FAILED\n{detail}", "ERROR")
+        return False
+
+    def install_targets_profile_dependencies(self):
+        """Install only the lightweight bridge dependencies for configured external runtimes."""
+        self.log("Installing tts_more_targets bridge dependencies only", "INFO")
+        for requirement in ("requests", "dacite", "python-dotenv"):
+            if self.check_package_installed(requirement):
+                self.log(f"{requirement} already satisfied - skipping", "SUCCESS")
+                continue
+            self.run_pip_command(["install", requirement], f"Installing {requirement}")
+
     def _install_state_path(self) -> Path:
         """Return the ignored, per-node state file used for idempotent updates."""
         return Path(__file__).resolve().parent / ".cache" / "install_state.json"
@@ -532,7 +592,8 @@ class TTSAudioInstaller:
         digest.update(str(self.INSTALL_STATE_VERSION).encode("utf-8"))
         digest.update(str(sys.executable).lower().encode("utf-8"))
         digest.update(f"{self.python_version.major}.{self.python_version.minor}".encode("utf-8"))
-        digest.update(repr(self.ENGINE_RUNTIME_CHECKS).encode("utf-8"))
+        digest.update(self.install_profile.encode("utf-8"))
+        digest.update(repr(self.active_engine_runtime_checks).encode("utf-8"))
 
         # An installer fix must be able to invalidate an old successful state
         # without requiring users to know an environment variable.
@@ -567,7 +628,7 @@ class TTSAudioInstaller:
                 missing.append(display_name)
 
         self.engine_validation_results = {}
-        for display_name, module_names in self.ENGINE_RUNTIME_CHECKS:
+        for display_name, module_names in self.active_engine_runtime_checks:
             available = all(self.module_available(module_name) for module_name in module_names)
             self.engine_validation_results[display_name] = available
             if not available:
@@ -1761,13 +1822,14 @@ class TTSAudioInstaller:
                 validation_errors.append(f"{display_name}: module is unavailable")
                 self.log(f"{display_name}: FAILED - module is unavailable", "ERROR")
 
-        # Validate actual runtime entry points instead of relying on package
-        # distribution metadata. This is intentionally presence-only.
-        for display_name, module_names in self.ENGINE_RUNTIME_CHECKS:
+        # Fresh-process imports catch missing transitive dependencies without
+        # loading model weights. For tts_more_targets these prove only the
+        # registry/configuration bridge, never synthesis readiness.
+        for display_name, module_names in self.active_engine_runtime_checks:
             missing_modules = [
                 module_name
                 for module_name in module_names
-                if not self.module_available(module_name)
+                if not self.fresh_module_importable(module_name)
             ]
             available = not missing_modules
             self.engine_validation_results[display_name] = available
@@ -1784,7 +1846,7 @@ class TTSAudioInstaller:
 
         # Dots supplies a no-op normalizer when tn/WeTextProcessing is absent;
         # this affects text normalization quality, not engine availability.
-        if not self.module_available("tn.chinese.normalizer"):
+        if self.optional_engine_installers_enabled and not self.module_available("tn.chinese.normalizer"):
             warning = "Dots TTS text normalization unavailable; Dots will use its built-in no-op fallback"
             self.add_install_warning(
                 "Dots TTS text normalization (optional)",
@@ -1870,7 +1932,10 @@ class TTSAudioInstaller:
         print("\n" + "-"*50)
         print("   EXTERNAL ENGINE RUNTIME CHECKS")
         print("-"*50)
-        print("   Bundled and isolated engines use the core/shared runtime checks.")
+        if self.optional_engine_installers_enabled:
+            print("   Bundled and isolated engines use the core/shared runtime checks.")
+        else:
+            print("   API Bridge checks prove configuration imports only; they do not load models or prove synthesis readiness.")
         for display_name, available in self.engine_validation_results.items():
             status = "AVAILABLE" if available else "UNAVAILABLE"
             marker = "+" if available else "X"
@@ -1884,8 +1949,10 @@ class TTSAudioInstaller:
                 print(f"  [!] {description}")
         
         print("\n" + "="*70)
-        if installation_valid:
+        if installation_valid and self.optional_engine_installers_enabled:
             print(" "*15 + "READY TO USE TTS AUDIO SUITE IN COMFYUI!")
+        elif installation_valid:
+            print(" "*10 + "API BRIDGE CONFIGURATION READY - VERIFY EXTERNAL RUNTIMES BEFORE SYNTHESIS")
         else:
             print(" "*12 + "INSTALLATION NEEDS ATTENTION BEFORE USE")
         print("="*70)
@@ -1917,36 +1984,41 @@ def main():
         if installer.can_skip_dependency_installation():
             installer.log("No dependency changes detected; continuing with fast validation only", "INFO")
         else:
-            installer.ensure_requirements_installed()  # Ensure requirements.txt is installed first
+            if not installer.optional_engine_installers_enabled:
+                installer.install_targets_profile_dependencies()
+            else:
+                installer.ensure_requirements_installed()  # Ensure requirements.txt is installed first
 
-            # Check system dependencies (Linux only)
-            if not installer.check_system_dependencies():
-                installer.log("System dependency check failed - aborting installation", "ERROR")
-                sys.exit(1)
+                # Check system dependencies (Linux only)
+                if not installer.check_system_dependencies():
+                    installer.log("System dependency check failed - aborting installation", "ERROR")
+                    sys.exit(1)
 
-            # Install in correct order to prevent conflicts
-            installer.install_pytorch_with_cuda()  # Install PyTorch first with proper CUDA detection
-            installer.install_core_dependencies()
-            installer.install_macos_specific_packages()  # Mac-specific package fixes
-            installer.install_numpy_with_constraints()
-            installer.install_audio_separator_if_compatible()  # Install audio-separator only if numpy>=2
-            installer.install_rvc_dependencies()
-            installer.install_gradio_and_opencv_dependencies()  # Pre-install deps before --no-deps
-            installer.install_problematic_packages()
-            installer.install_onnxruntime_with_gpu_support()  # Install ONNX with GPU acceleration if available
-            installer.install_vibevoice()  # Install VibeVoice with careful dependency management
-            installer.install_echo_tts()  # Install Echo-TTS with minimal dependency impact
-            installer.install_dots_tts()  # Install official Dots TTS in the main environment first
-            installer.install_fish_audio_s2()  # Install Fish S2 without changing Torch/Transformers
-            installer.install_f5tts_multilingual_support()  # Install phonemization for Polish/multilingual F5-TTS
-            installer.install_indexts_text_processing()  # Install IndexTTS-2 text normalization with fallback
-            installer.install_russian_text_stresser_support()  # Install lightweight Russian stress package for Official 23-Lang
-            installer.handle_wandb_issues()  # Fix wandb circular import
-            installer.handle_python_313_specific()
+                # Install in correct order to prevent conflicts
+                installer.install_pytorch_with_cuda()  # Install PyTorch first with proper CUDA detection
+                installer.install_core_dependencies()
+                installer.install_macos_specific_packages()  # Mac-specific package fixes
+                installer.install_numpy_with_constraints()
+                installer.install_audio_separator_if_compatible()  # Install audio-separator only if numpy>=2
+                installer.install_rvc_dependencies()
+                installer.install_gradio_and_opencv_dependencies()  # Pre-install deps before --no-deps
+                installer.install_problematic_packages()
+                installer.install_onnxruntime_with_gpu_support()  # Install ONNX with GPU acceleration if available
+                installer.install_vibevoice()  # Install VibeVoice with careful dependency management
+                installer.install_echo_tts()  # Install Echo-TTS with minimal dependency impact
+                installer.install_dots_tts()  # Install official Dots TTS in the main environment first
+                installer.install_fish_audio_s2()  # Install Fish S2 without changing Torch/Transformers
+                installer.install_f5tts_multilingual_support()  # Install phonemization for Polish/multilingual F5-TTS
+                installer.install_indexts_text_processing()  # Install IndexTTS-2 text normalization with fallback
+                installer.install_russian_text_stresser_support()  # Install lightweight Russian stress package for Official 23-Lang
+                installer.handle_wandb_issues()  # Fix wandb circular import
+                installer.handle_python_313_specific()
         
         # Validation and summary
         installer.check_version_conflicts()
         success = installer.validate_installation()
+        if not installer.optional_engine_installers_enabled:
+            success = installer.dependency_integrity_ok() and success
         installer.save_installation_state(success)
         installer.print_installation_summary(success)
 

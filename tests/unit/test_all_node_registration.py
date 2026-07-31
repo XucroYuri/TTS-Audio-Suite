@@ -1,3 +1,4 @@
+import importlib.machinery
 import importlib.util
 import io
 import json
@@ -79,6 +80,13 @@ EXPECTED_NODE_IDS = {
     "TTSExternalAudioAsset",
 }
 
+TARGETS_PROFILE_NODE_IDS = {
+    "TTSExternalGPTSovitsEngine",
+    "TTSExternalIndexTTSEngine",
+    "TTSExternalCosyVoiceEngine",
+    "TTSExternalAudioAsset",
+}
+
 
 @pytest.mark.unit
 def test_plugin_loader_probe_keeps_the_parent_process_unchanged():
@@ -134,6 +142,26 @@ def test_plugin_loader_probe_cleans_up_its_temporary_directories(tmp_path: Path)
     assert list(temporary_root.iterdir()) == []
 
 
+@pytest.mark.unit
+def test_targets_profile_registers_only_api_bridge_nodes():
+    result = subprocess.run(
+        [sys.executable, str(Path(__file__).resolve()), "--probe"],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "COMFYUI_TESTING": "1",
+            "TTS_AUDIO_SUITE_INSTALL_PROFILE": "tts_more_targets",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout)
+    assert set(payload["node_ids"]) == TARGETS_PROFILE_NODE_IDS
+
+
 def _install_comfyui_test_stubs(probe_root: Path):
     for module_name in (
         "comfy",
@@ -173,8 +201,11 @@ def _install_optional_dependency_stubs():
     sys.modules["audio_separator.separator"] = audio_separator_separator
 
     scipy = types.ModuleType("scipy")
+    scipy.__spec__ = importlib.machinery.ModuleSpec("scipy", loader=None)
     scipy_io = types.ModuleType("scipy.io")
+    scipy_io.__spec__ = importlib.machinery.ModuleSpec("scipy.io", loader=None)
     scipy_wavfile = types.ModuleType("scipy.io.wavfile")
+    scipy_wavfile.__spec__ = importlib.machinery.ModuleSpec("scipy.io.wavfile", loader=None)
     scipy_wavfile.write = lambda *args, **kwargs: None
     scipy_io.wavfile = scipy_wavfile
     scipy.io = scipy_io
