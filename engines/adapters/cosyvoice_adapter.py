@@ -53,6 +53,10 @@ class CosyVoiceAdapter:
             "load_trt": False,
             "load_vllm": False
         }
+
+    def _audio_cache_enabled(self) -> bool:
+        """Keep registered external runtimes observable across release/reload cycles."""
+        return not bool(getattr(self.engine, "source_root", None))
     
     def initialize_engine(self,
                          model_path: Optional[str] = None,
@@ -228,7 +232,8 @@ class CosyVoiceAdapter:
         # print(f"🔑 Audio cache key: {cache_key[:100]}... (variant={self.model_variant})")
 
         # Check cache
-        cached_audio = self.audio_cache.get_cached_audio(cache_key)
+        cache_enabled = self._audio_cache_enabled()
+        cached_audio = self.audio_cache.get_cached_audio(cache_key) if cache_enabled else None
         if cached_audio:
             print(f"💾 Using cached CosyVoice3 audio for: '{processed_text[:30]}...'")
             return cached_audio[0]
@@ -259,7 +264,8 @@ class CosyVoiceAdapter:
 
         # Cache the result
         duration = audio.shape[-1] / 24000.0  # CosyVoice3 uses 24000 Hz
-        self.audio_cache.cache_audio(cache_key, audio, duration)
+        if cache_enabled:
+            self.audio_cache.cache_audio(cache_key, audio, duration)
 
         return audio
     
@@ -355,7 +361,8 @@ class CosyVoiceAdapter:
             )
 
             # Check cache first
-            cached_segment_audio = self.audio_cache.get_cached_audio(segment_cache_key)
+            cache_enabled = self._audio_cache_enabled()
+            cached_segment_audio = self.audio_cache.get_cached_audio(segment_cache_key) if cache_enabled else None
             if cached_segment_audio:
                 print(f"💾 Using cached CosyVoice3 segment for '{resolved_character_label(character_name, speaker_audio)}'")
                 segment_audio = cached_segment_audio[0]
@@ -374,7 +381,8 @@ class CosyVoiceAdapter:
 
                 # Cache the segment
                 duration = segment_audio.shape[-1] / 24000.0  # CosyVoice3 uses 24000 Hz
-                self.audio_cache.cache_audio(segment_cache_key, segment_audio, duration)
+                if cache_enabled:
+                    self.audio_cache.cache_audio(segment_cache_key, segment_audio, duration)
 
             audio_segments.append(segment_audio)
 

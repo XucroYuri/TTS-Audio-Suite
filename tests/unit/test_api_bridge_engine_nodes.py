@@ -215,6 +215,139 @@ def test_registered_index_adapter_does_not_return_global_audio_cache(monkeypatch
     assert cached == []
 
 
+@pytest.mark.unit
+def test_registered_cosyvoice_adapter_executes_external_engine_on_every_call():
+    import engines.adapters.cosyvoice_adapter as adapter_module
+
+    generated = []
+    cache_reads = []
+    cache_writes = []
+
+    class FakeExternalEngine:
+        source_root = "C:/cosy/source"
+
+        def generate(self, **kwargs):
+            generated.append(kwargs)
+            return adapter_module.torch.full((1, 2400), float(len(generated)))
+
+    class FakeAudioCache:
+        def generate_cache_key(self, *args, **kwargs):
+            return "coarse-existing-result"
+
+        def get_cached_audio(self, cache_key):
+            cache_reads.append(cache_key)
+            return (adapter_module.torch.zeros(1, 2400), 0.1)
+
+        def cache_audio(self, *args):
+            cache_writes.append(args)
+
+    adapter = adapter_module.CosyVoiceAdapter.__new__(adapter_module.CosyVoiceAdapter)
+    adapter.engine = FakeExternalEngine()
+    adapter.audio_cache = FakeAudioCache()
+    adapter.model_variant = "standard"
+
+    first = adapter.generate(text="must execute twice", mode="cross_lingual")
+    second = adapter.generate(text="must execute twice", mode="cross_lingual")
+
+    assert len(generated) == 2
+    assert adapter_module.torch.count_nonzero(first == 1).item() == 2400
+    assert adapter_module.torch.count_nonzero(second == 2).item() == 2400
+    assert cache_reads == []
+    assert cache_writes == []
+
+
+@pytest.mark.unit
+def test_registered_cosyvoice_runtime_identities_cannot_share_waveform_cache():
+    import engines.adapters.cosyvoice_adapter as adapter_module
+
+    generated = []
+
+    class FakeExternalEngine:
+        def __init__(self, resource_id, source_root, model_dir, value):
+            self.resource_id = resource_id
+            self.source_root = source_root
+            self.model_dir = model_dir
+            self.value = value
+
+        def generate(self, **kwargs):
+            generated.append((self.resource_id, self.source_root, self.model_dir, kwargs))
+            return adapter_module.torch.full((1, 2400), self.value)
+
+    class CoarseSharedCache:
+        def generate_cache_key(self, *args, **kwargs):
+            return "same-key-without-runtime-identity"
+
+        def get_cached_audio(self, cache_key):
+            return (adapter_module.torch.full((1, 2400), 9.0), 0.1)
+
+        def cache_audio(self, *args):
+            raise AssertionError("registered external audio must not enter the waveform cache")
+
+    shared_cache = CoarseSharedCache()
+    adapters = []
+    for identity in (
+        ("cosy-a", "C:/cosy/a", "C:/cosy/a/model", 1.0),
+        ("cosy-b", "D:/cosy/b", "D:/cosy/b/different-model", 2.0),
+    ):
+        adapter = adapter_module.CosyVoiceAdapter.__new__(adapter_module.CosyVoiceAdapter)
+        adapter.engine = FakeExternalEngine(*identity)
+        adapter.audio_cache = shared_cache
+        adapter.model_variant = "standard"
+        adapters.append(adapter)
+
+    first = adapters[0].generate(text="same request", mode="cross_lingual")
+    second = adapters[1].generate(text="same request", mode="cross_lingual")
+
+    assert [item[:3] for item in generated] == [
+        ("cosy-a", "C:/cosy/a", "C:/cosy/a/model"),
+        ("cosy-b", "D:/cosy/b", "D:/cosy/b/different-model"),
+    ]
+    assert adapter_module.torch.count_nonzero(first == 1).item() == 2400
+    assert adapter_module.torch.count_nonzero(second == 2).item() == 2400
+
+
+@pytest.mark.unit
+def test_unregistered_cosyvoice_adapter_preserves_waveform_cache():
+    import engines.adapters.cosyvoice_adapter as adapter_module
+
+    generated = []
+
+    class FakeBundledEngine:
+        source_root = None
+
+        def generate(self, **kwargs):
+            generated.append(kwargs)
+            return adapter_module.torch.ones(1, 2400)
+
+    class FakeAudioCache:
+        def __init__(self):
+            self.value = None
+            self.writes = 0
+
+        def generate_cache_key(self, *args, **kwargs):
+            return "legacy-cache-key"
+
+        def get_cached_audio(self, cache_key):
+            return self.value
+
+        def cache_audio(self, cache_key, audio, duration):
+            self.writes += 1
+            self.value = (audio, duration)
+
+    cache = FakeAudioCache()
+    adapter = adapter_module.CosyVoiceAdapter.__new__(adapter_module.CosyVoiceAdapter)
+    adapter.engine = FakeBundledEngine()
+    adapter.audio_cache = cache
+    adapter.model_variant = "standard"
+
+    first = adapter.generate(text="legacy cache stays", mode="cross_lingual")
+    second = adapter.generate(text="legacy cache stays", mode="cross_lingual")
+
+    assert len(generated) == 1
+    assert cache.writes == 1
+    assert first is second
+
+
 def _load_external_index_subprocess_module():
     path = REPO_ROOT / "engines" / "index_tts" / "external_subprocess.py"
     assert path.is_file(), "plugin-owned external IndexTTS subprocess adapter is missing"
