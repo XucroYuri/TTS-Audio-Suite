@@ -36,6 +36,7 @@ class IndexTTSAdapter:
     
     def initialize_engine(self,
                          model_path: Optional[str] = None,
+                         index_tts_home: Optional[str] = None,
                          device: str = "auto",
                          use_fp16: bool = True,
                          use_cuda_kernel: Optional[bool] = None,
@@ -67,6 +68,7 @@ class IndexTTSAdapter:
         # Initialize engine
         self.engine = IndexTTSEngine(
             model_dir=model_path,
+            source_root=index_tts_home,
             device=device,
             use_fp16=use_fp16,
             use_cuda_kernel=use_cuda_kernel,

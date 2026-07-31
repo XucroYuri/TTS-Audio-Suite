@@ -86,6 +86,7 @@ class IndexTTSProcessor:
         # Initialize adapter with engine config
         self.adapter.initialize_engine(
             model_path=engine_config.get('model_path'),
+            index_tts_home=engine_config.get('index_tts_home'),
             device=engine_config.get('device', 'auto'),
             use_fp16=engine_config.get('use_fp16', True),
             use_cuda_kernel=engine_config.get('use_cuda_kernel'),

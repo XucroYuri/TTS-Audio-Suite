@@ -1,7 +1,9 @@
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import types
+import wave
 
 import pytest
 
@@ -123,6 +125,250 @@ def test_index_bridge_normalizes_cuda_kernel_choice_for_the_processor(fake_regis
 
 
 @pytest.mark.unit
+def test_index_processor_passes_registered_checkout_to_adapter(monkeypatch):
+    import engines.processors.index_tts_processor as processor_module
+
+    initialized = {}
+
+    class FakeAdapter:
+        def initialize_engine(self, **kwargs):
+            initialized.update(kwargs)
+
+    monkeypatch.setattr(processor_module, "IndexTTSAdapter", FakeAdapter)
+    monkeypatch.setattr(processor_module.IndexTTSProcessor, "_setup_character_parser", lambda self: None)
+
+    processor_module.IndexTTSProcessor(
+        {
+            "model_path": "C:/index/model",
+            "index_tts_home": "C:/index/source",
+            "device": "cuda",
+        }
+    )
+
+    assert initialized["model_path"] == "C:/index/model"
+    assert initialized["index_tts_home"] == "C:/index/source"
+
+
+@pytest.mark.unit
+def test_index_adapter_builds_engine_for_registered_checkout(monkeypatch):
+    import engines.adapters.index_tts_adapter as adapter_module
+
+    initialized = {}
+
+    class FakeEngine:
+        def __init__(self, **kwargs):
+            initialized.update(kwargs)
+
+    monkeypatch.setattr(adapter_module, "IndexTTSEngine", FakeEngine)
+    adapter = adapter_module.IndexTTSAdapter.__new__(adapter_module.IndexTTSAdapter)
+    adapter.engine = None
+
+    adapter.initialize_engine(
+        model_path="C:/index/model",
+        index_tts_home="C:/index/source",
+        device="cuda",
+    )
+
+    assert initialized["model_dir"] == "C:/index/model"
+    assert initialized["source_root"] == "C:/index/source"
+
+
+def _load_external_index_subprocess_module():
+    path = REPO_ROOT / "engines" / "index_tts" / "external_subprocess.py"
+    assert path.is_file(), "plugin-owned external IndexTTS subprocess adapter is missing"
+    spec = importlib.util.spec_from_file_location("external_index_subprocess_test", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _prepare_external_index_runtime(tmp_path):
+    source_root = tmp_path / "index-source"
+    model_dir = source_root / "checkpoints"
+    inference_module = source_root / "indextts" / "infer_v2.py"
+    inference_module.parent.mkdir(parents=True)
+    inference_module.write_text("class IndexTTS2: pass\n", encoding="utf-8")
+    python_executable = source_root / ".venv" / "Scripts" / "python.exe"
+    python_executable.parent.mkdir(parents=True)
+    python_executable.touch()
+    model_dir.mkdir()
+    (model_dir / "config.yaml").write_text("model: test\n", encoding="utf-8")
+    voice_path = source_root / "voice.wav"
+    with wave.open(str(voice_path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x01\x00" * 160)
+    temp_root = tmp_path / "temp"
+    temp_root.mkdir()
+    return source_root, model_dir, python_executable, voice_path, temp_root
+
+
+@pytest.mark.unit
+def test_external_index_subprocess_uses_checkout_venv_and_cleans_temp(monkeypatch, tmp_path):
+    module = _load_external_index_subprocess_module()
+    source_root, model_dir, python_executable, voice_path, temp_root = _prepare_external_index_runtime(tmp_path)
+    observed = {}
+
+    class FakeProcess:
+        pid = 4242
+        returncode = 0
+
+        def __init__(self, command, **kwargs):
+            observed["command"] = command
+            observed["kwargs"] = kwargs
+
+        def communicate(self, timeout):
+            observed["timeout"] = timeout
+            manifest = json.loads(Path(observed["command"][2]).read_text(encoding="utf-8"))
+            observed["manifest"] = manifest
+            with wave.open(manifest["output_path"], "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(22050)
+                handle.writeframes(b"\x10\x00" * 220)
+            return ("official stdout", "")
+
+    monkeypatch.setattr(module.subprocess, "Popen", FakeProcess)
+    proxy = module.ExternalIndexTTSSubprocessProxy(
+        source_root=source_root,
+        model_dir=model_dir,
+        device="cuda:0",
+        use_fp16=True,
+        timeout_seconds=321.0,
+        temp_root=temp_root,
+    )
+
+    sample_rate, samples = proxy.infer(
+        spk_audio_prompt=str(voice_path),
+        text="真实外部推理。",
+        output_path=None,
+        do_sample=True,
+        temperature=0.8,
+    )
+
+    assert observed["command"][0] == str(python_executable)
+    assert Path(observed["command"][1]).name == "external_subprocess_runner.py"
+    assert observed["kwargs"]["cwd"] == str(source_root)
+    assert observed["timeout"] == 321.0
+    assert observed["manifest"]["source_root"] == str(source_root)
+    assert observed["manifest"]["model_dir"] == str(model_dir)
+    assert observed["manifest"]["inference"]["text"] == "真实外部推理。"
+    assert sample_rate == 22050
+    assert samples.shape == (220, 1)
+    assert not list(temp_root.iterdir())
+
+
+@pytest.mark.unit
+def test_external_index_subprocess_propagates_exit_stderr_and_cleans_temp(monkeypatch, tmp_path):
+    module = _load_external_index_subprocess_module()
+    source_root, model_dir, _, voice_path, temp_root = _prepare_external_index_runtime(tmp_path)
+
+    class FailedProcess:
+        pid = 4343
+        returncode = 4
+
+        def __init__(self, command, **kwargs):
+            pass
+
+        def communicate(self, timeout=None):
+            return ("", "official inference exploded")
+
+    monkeypatch.setattr(module.subprocess, "Popen", FailedProcess)
+    proxy = module.ExternalIndexTTSSubprocessProxy(
+        source_root=source_root,
+        model_dir=model_dir,
+        device="cuda:0",
+        use_fp16=True,
+        temp_root=temp_root,
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        proxy.infer(spk_audio_prompt=str(voice_path), text="失败传播。", output_path=None)
+
+    assert str(error.value) == "External IndexTTS subprocess exited 4: official inference exploded"
+    assert not list(temp_root.iterdir())
+
+
+@pytest.mark.unit
+def test_external_index_subprocess_terminates_tree_on_timeout_and_cleans_temp(monkeypatch, tmp_path):
+    module = _load_external_index_subprocess_module()
+    source_root, model_dir, _, voice_path, temp_root = _prepare_external_index_runtime(tmp_path)
+    terminated = []
+
+    class TimedOutProcess:
+        pid = 4444
+        returncode = None
+
+        def __init__(self, command, **kwargs):
+            self.calls = 0
+
+        def communicate(self, timeout=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise module.subprocess.TimeoutExpired("indextts", timeout)
+            return ("", "child stopped")
+
+    monkeypatch.setattr(module.subprocess, "Popen", TimedOutProcess)
+    monkeypatch.setattr(
+        module.ExternalIndexTTSSubprocessProxy,
+        "_terminate_process_tree",
+        staticmethod(lambda process: terminated.append(process.pid)),
+    )
+    proxy = module.ExternalIndexTTSSubprocessProxy(
+        source_root=source_root,
+        model_dir=model_dir,
+        device="cuda:0",
+        use_fp16=True,
+        timeout_seconds=0.5,
+        temp_root=temp_root,
+    )
+
+    with pytest.raises(TimeoutError, match="exceeded 0.5s"):
+        proxy.infer(spk_audio_prompt=str(voice_path), text="超时清理。", output_path=None)
+
+    assert terminated == [4444]
+    assert not list(temp_root.iterdir())
+
+
+@pytest.mark.unit
+def test_index_engine_uses_external_subprocess_for_registered_checkout(monkeypatch, tmp_path):
+    import engines.index_tts.index_tts as engine_module
+
+    source_root = tmp_path / "source"
+    model_dir = tmp_path / "model"
+    source_root.mkdir()
+    model_dir.mkdir()
+    created = {}
+
+    class FakeExternalProxy:
+        def __init__(self, **kwargs):
+            created.update(kwargs)
+
+    monkeypatch.setattr(
+        engine_module,
+        "ExternalIndexTTSSubprocessProxy",
+        FakeExternalProxy,
+        raising=False,
+    )
+    engine = engine_module.IndexTTSEngine(
+        model_dir=str(model_dir),
+        source_root=str(source_root),
+        device="cuda",
+        use_fp16=True,
+    )
+
+    engine._ensure_model_loaded()
+
+    assert isinstance(engine._tts_engine, FakeExternalProxy)
+    assert created["source_root"] == str(source_root)
+    assert created["model_dir"] == str(model_dir)
+    assert str(created["device"]).startswith("cuda")
+    assert created["use_fp16"] is True
+
+
+@pytest.mark.unit
 def test_bridge_rejects_a_resource_for_the_wrong_engine():
     class WrongEngineRegistry:
         def require(self, resource_id: str, engine: str):
@@ -205,6 +451,7 @@ def test_text_cache_recreates_gpt_processor_when_resource_identity_changes(
 _INDEX_LOAD_KEYS = [
     ("resource_id", "index-resource-b"),
     ("model_path", "C:/index-b"),
+    ("index_tts_home", "C:/source-b"),
     ("use_fp16", False),
     ("use_cuda_kernel", True),
     ("use_deepspeed", True),
@@ -218,6 +465,7 @@ def _index_engine_data(changed_key=None, changed_value=None):
     config = {
         "resource_id": "index-resource-a",
         "model_path": "C:/index-a",
+        "index_tts_home": "C:/source-a",
         "device": "cpu",
         "use_fp16": True,
         "use_cuda_kernel": None,

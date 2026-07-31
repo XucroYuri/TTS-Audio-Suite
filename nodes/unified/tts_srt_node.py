@@ -329,6 +329,7 @@ Hello! This is unified SRT TTS with character switching.
                     cuda_kernel = None
                 stable_params['resource_id'] = config.get('resource_id')
                 stable_params['model_path'] = config.get('model_path')
+                stable_params['index_tts_home'] = config.get('index_tts_home')
                 stable_params['use_fp16'] = config.get('use_fp16', True)
                 stable_params['use_cuda_kernel'] = cuda_kernel
                 stable_params['use_deepspeed'] = config.get('use_deepspeed', False)
