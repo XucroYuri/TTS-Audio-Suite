@@ -22,7 +22,7 @@ jobs:
       - name: Install test dependencies
         run: >-
           python -m pip install pytest pyyaml soundfile numpy requests aiohttp
-          huggingface_hub
+          huggingface_hub psutil
       - name: Install PyTorch CPU dependencies
         run: >-
           python -m pip install torch torchaudio
