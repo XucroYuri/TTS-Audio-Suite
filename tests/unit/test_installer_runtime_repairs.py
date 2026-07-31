@@ -70,6 +70,7 @@ def test_targets_profile_selects_only_api_bridge_target_engines(monkeypatch):
         ("CosyVoice API Bridge (configuration)", ("api_bridge.resource_registry", "nodes.api_bridge.resource_engine_nodes")),
     )
     assert installer.optional_engine_installers_enabled is False
+    assert installer.active_core_module_checks == (("soundfile", "SoundFile"),)
 
 
 @pytest.mark.unit

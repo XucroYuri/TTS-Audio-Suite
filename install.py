@@ -42,6 +42,10 @@ class TTSAudioInstaller:
         ("omegaconf", "OmegaConf"),
     )
 
+    # The API Bridge profile exposes resource configuration plus reference
+    # audio asset nodes. It deliberately does not claim bundled-engine support.
+    TARGETS_CORE_MODULE_CHECKS = (("soundfile", "SoundFile"),)
+
     # These are the external engine runtimes installed or repaired by this
     # script. Imports only verify package availability; they never load models.
     ENGINE_RUNTIME_CHECKS = (
@@ -69,6 +73,11 @@ class TTSAudioInstaller:
         self.russian_stress_fork_ref = "git+https://github.com/diodiogod/add-stress-to-epub.git@98f53b9"
         self.install_profile = os.environ.get("TTS_AUDIO_SUITE_INSTALL_PROFILE", "all_engines").strip().lower()
         self.optional_engine_installers_enabled = self.install_profile != self.TARGETS_PROFILE
+        self.active_core_module_checks = (
+            self.CORE_MODULE_CHECKS
+            if self.optional_engine_installers_enabled
+            else self.TARGETS_CORE_MODULE_CHECKS
+        )
         self.active_engine_runtime_checks = (
             self.ENGINE_RUNTIME_CHECKS
             if self.optional_engine_installers_enabled
@@ -576,7 +585,7 @@ class TTSAudioInstaller:
     def install_targets_profile_dependencies(self):
         """Install only the lightweight bridge dependencies for configured external runtimes."""
         self.log("Installing tts_more_targets bridge dependencies only", "INFO")
-        for requirement in ("requests", "dacite", "python-dotenv"):
+        for requirement in ("requests", "dacite", "python-dotenv", "soundfile"):
             if self.check_package_installed(requirement):
                 self.log(f"{requirement} already satisfied - skipping", "SUCCESS")
                 continue
@@ -623,7 +632,7 @@ class TTSAudioInstaller:
     def _quick_installation_status(self):
         """Check the small set of entry points needed to trust the install marker."""
         missing = []
-        for module_name, display_name in self.CORE_MODULE_CHECKS:
+        for module_name, display_name in self.active_core_module_checks:
             if not self.module_available(module_name):
                 missing.append(display_name)
 
@@ -1815,7 +1824,7 @@ class TTSAudioInstaller:
 
         validation_errors = []
 
-        for module_name, display_name in self.CORE_MODULE_CHECKS:
+        for module_name, display_name in self.active_core_module_checks:
             if self.module_available(module_name):
                 self.log(f"{display_name}: OK", "SUCCESS")
             else:
