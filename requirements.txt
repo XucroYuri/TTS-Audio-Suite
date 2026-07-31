@@ -41,6 +41,7 @@ lingua-language-detector
 accelerate
 datasets
 requests
+psutil>=5.9.0           # Bounded descendant-tree cleanup for isolated external runtimes
 dacite
 bitsandbytes>=0.47.0     # 4-bit quantization support for VibeVoice memory efficiency
 safetensors>=0.6.2       # MOSS-TTS / HF safetensors checkpoints

@@ -10,8 +10,10 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Any
 
+import psutil
 import soundfile
 
 
@@ -79,12 +81,13 @@ class ExternalIndexTTSSubprocessProxy:
         if not voice_path.is_file():
             raise RuntimeError(f"IndexTTS speaker reference audio is missing: {voice_path}")
 
-        with tempfile.TemporaryDirectory(
+        temporary_directory = tempfile.TemporaryDirectory(
             prefix="tts-audio-suite-indextts-",
             dir=str(self.temp_root) if self.temp_root is not None else None,
-            ignore_cleanup_errors=True,
-        ) as temporary_directory:
-            temporary_path = Path(temporary_directory)
+        )
+        primary_error: BaseException | None = None
+        try:
+            temporary_path = Path(temporary_directory.name)
             child_output = temporary_path / "output.wav"
             manifest_path = temporary_path / "request.json"
             manifest = {
@@ -171,12 +174,32 @@ class ExternalIndexTTSSubprocessProxy:
                 requested_output.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(child_output, requested_output)
             return int(sample_rate), samples
+        except BaseException as exc:
+            primary_error = exc
+            raise
+        finally:
+            try:
+                temporary_directory.cleanup()
+            except Exception as cleanup_error:
+                diagnostic = f"temporary directory cleanup failed: {cleanup_error}"
+                if primary_error is None:
+                    raise RuntimeError(diagnostic) from cleanup_error
+                primary_error.args = (f"{primary_error}; {diagnostic}",)
 
     def _cleanup_timed_out_process(self, process) -> tuple[str, str, str]:
         """Best-effort bounded cleanup that never replaces the primary timeout."""
         notes: list[str] = []
+        deadline = time.monotonic() + self.termination_grace_seconds
         try:
-            self._terminate_process_tree(process, self.termination_grace_seconds)
+            tree_diagnostic = self._terminate_process_tree(
+                process,
+                min(
+                    self.termination_grace_seconds,
+                    max(0.0, deadline - time.monotonic()),
+                ),
+            )
+            if tree_diagnostic:
+                notes.append(str(tree_diagnostic))
         except Exception as exc:
             notes.append(f"tree termination failed: {exc}")
 
@@ -192,10 +215,15 @@ class ExternalIndexTTSSubprocessProxy:
                 notes.append(f"direct kill failed: {exc}")
 
         try:
-            stdout, stderr = process.communicate(timeout=self.termination_grace_seconds)
+            remaining = min(
+                self.termination_grace_seconds,
+                max(0.0, deadline - time.monotonic()),
+            )
+            stdout, stderr = process.communicate(timeout=remaining)
         except subprocess.TimeoutExpired:
             notes.append(
-                f"cleanup communicate exceeded {self.termination_grace_seconds:g}s"
+                f"cleanup communicate exceeded remaining {remaining:g}s "
+                f"of {self.termination_grace_seconds:g}s grace"
             )
             stdout, stderr = "", ""
         except Exception as exc:
@@ -209,32 +237,145 @@ class ExternalIndexTTSSubprocessProxy:
         return stdout, stderr, "; ".join(notes)
 
     @staticmethod
-    def _terminate_process_tree(process, grace_seconds: float) -> None:
+    def _windows_process_is_alive(candidate) -> bool:
+        try:
+            return bool(candidate.is_running())
+        except psutil.NoSuchProcess:
+            return False
+        except Exception:
+            return True
+
+    @staticmethod
+    def _terminate_process_tree(process, grace_seconds: float) -> str:
         if process.poll() is not None:
-            return
+            return ""
+        if grace_seconds <= 0:
+            raise TimeoutError("process-tree termination deadline was already exhausted")
+        deadline = time.monotonic() + grace_seconds
         if os.name == "nt":
-            result = subprocess.run(
-                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
-                timeout=grace_seconds,
-            )
-            if result.returncode != 0 and process.poll() is None:
-                diagnostic = (result.stderr or result.stdout or "taskkill failed").strip()
-                raise RuntimeError(diagnostic)
+            notes: list[str] = []
+            captured: dict[int, Any] = {}
+
+            def capture_tree() -> None:
+                try:
+                    root = psutil.Process(process.pid)
+                    for candidate in [*root.children(recursive=True), root]:
+                        captured[candidate.pid] = candidate
+                except psutil.NoSuchProcess:
+                    return
+                except Exception as exc:
+                    notes.append(f"process-tree snapshot failed: {exc}")
+
+            capture_tree()
+            remaining = max(0.0, deadline - time.monotonic())
+            if remaining <= 0:
+                raise TimeoutError("process-tree termination deadline exhausted before taskkill")
+            taskkill_timeout = min(remaining, grace_seconds / 2.0)
+            taskkill_failed = False
+            try:
+                result = subprocess.run(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                    timeout=taskkill_timeout,
+                )
+                if result.returncode != 0:
+                    taskkill_failed = True
+                    diagnostic = (result.stderr or result.stdout or "taskkill failed").strip()
+                    notes.append(f"taskkill failed ({result.returncode}): {diagnostic}")
+            except subprocess.TimeoutExpired:
+                taskkill_failed = True
+                notes.append(f"taskkill exceeded {taskkill_timeout:g}s")
+            except Exception as exc:
+                taskkill_failed = True
+                notes.append(f"taskkill invocation failed: {exc}")
+
+            # Refresh while the root still exists so descendants created during taskkill
+            # are covered by the bounded fallback as well.
+            capture_tree()
+            alive = [
+                candidate
+                for candidate in captured.values()
+                if ExternalIndexTTSSubprocessProxy._windows_process_is_alive(candidate)
+            ]
+            if taskkill_failed or alive:
+                descendants = [candidate for candidate in alive if candidate.pid != process.pid]
+                root_candidates = [candidate for candidate in alive if candidate.pid == process.pid]
+                termination_order = [*reversed(descendants), *root_candidates]
+                for candidate in termination_order:
+                    try:
+                        candidate.terminate()
+                    except psutil.NoSuchProcess:
+                        pass
+                    except Exception as exc:
+                        notes.append(f"terminate PID {candidate.pid} failed: {exc}")
+
+                alive = [
+                    candidate
+                    for candidate in termination_order
+                    if ExternalIndexTTSSubprocessProxy._windows_process_is_alive(candidate)
+                ]
+                remaining = max(0.0, deadline - time.monotonic())
+                if alive and remaining > 0:
+                    try:
+                        _, alive = psutil.wait_procs(alive, timeout=remaining / 2.0)
+                    except Exception as exc:
+                        notes.append(f"terminate wait failed: {exc}")
+
+                for candidate in alive:
+                    try:
+                        candidate.kill()
+                    except psutil.NoSuchProcess:
+                        pass
+                    except Exception as exc:
+                        notes.append(f"kill PID {candidate.pid} failed: {exc}")
+
+                alive = [
+                    candidate
+                    for candidate in alive
+                    if ExternalIndexTTSSubprocessProxy._windows_process_is_alive(candidate)
+                ]
+                remaining = max(0.0, deadline - time.monotonic())
+                if alive and remaining > 0:
+                    try:
+                        _, alive = psutil.wait_procs(alive, timeout=remaining)
+                    except Exception as exc:
+                        notes.append(f"kill wait failed: {exc}")
+
+                alive = [
+                    candidate
+                    for candidate in alive
+                    if ExternalIndexTTSSubprocessProxy._windows_process_is_alive(candidate)
+                ]
+                if alive:
+                    alive_pids = ", ".join(str(candidate.pid) for candidate in alive)
+                    raise RuntimeError(
+                        "; ".join([*notes, f"process-tree PIDs still alive: {alive_pids}"])
+                    )
         else:
             try:
                 os.killpg(os.getpgid(process.pid), signal.SIGKILL)
             except ProcessLookupError:
-                return
-        try:
-            process.wait(timeout=grace_seconds)
-        except subprocess.TimeoutExpired as exc:
-            raise TimeoutError(
-                f"process tree did not exit within {grace_seconds:g}s"
-            ) from exc
+                return ""
+            notes = []
+        if process.poll() is None:
+            remaining = max(0.0, deadline - time.monotonic())
+            if remaining <= 0:
+                diagnostic = "; ".join(notes) if notes else "deadline exhausted"
+                raise TimeoutError(f"process tree exit could not be verified: {diagnostic}")
+            try:
+                process.wait(timeout=remaining)
+            except subprocess.TimeoutExpired as exc:
+                diagnostic = "; ".join(notes) if notes else "no child diagnostics"
+                raise TimeoutError(
+                    f"process tree did not exit within {grace_seconds:g}s: {diagnostic}"
+                ) from exc
+            except Exception as exc:
+                diagnostic = "; ".join(notes) if notes else "no child diagnostics"
+                raise RuntimeError(f"process tree wait failed: {exc}; {diagnostic}") from exc
+        return "; ".join(notes)
 
     def to(self, device):
         self.device = str(device)

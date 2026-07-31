@@ -1,8 +1,11 @@
 import importlib.util
 import json
 import math
+import os
 from pathlib import Path
+import subprocess
 import sys
+import time
 import types
 import wave
 
@@ -440,7 +443,8 @@ def test_external_index_timeout_falls_back_to_direct_kill_when_tree_kill_fails(m
     assert "exceeded 0.5s" in str(error.value)
     assert "taskkill denied" in str(error.value)
     assert instances[0].kill_calls == 1
-    assert instances[0].timeouts == [0.5, 0.2]
+    assert instances[0].timeouts[0] == 0.5
+    assert 0 < instances[0].timeouts[1] <= 0.21
     assert not list(temp_root.iterdir())
 
 
@@ -489,8 +493,10 @@ def test_external_index_timeout_cleanup_remains_bounded_when_process_will_not_ex
 
     assert "exceeded 0.5s" in str(error.value)
     assert "direct kill denied" in str(error.value)
-    assert "cleanup communicate exceeded 0.2s" in str(error.value)
-    assert instances[0].timeouts == [0.5, 0.2]
+    assert "cleanup communicate exceeded remaining" in str(error.value)
+    assert "of 0.2s grace" in str(error.value)
+    assert instances[0].timeouts[0] == 0.5
+    assert 0 < instances[0].timeouts[1] <= 0.21
     assert not list(temp_root.iterdir())
 
 
@@ -560,12 +566,246 @@ def test_windows_tree_kill_has_a_deadline_and_checks_taskkill_failure(monkeypatc
 
     monkeypatch.setattr(module.os, "name", "nt")
     monkeypatch.setattr(module.subprocess, "run", failed_taskkill)
+    monkeypatch.setattr(
+        module.psutil,
+        "Process",
+        lambda pid: (_ for _ in ()).throw(module.psutil.NoSuchProcess(pid)),
+    )
 
     with pytest.raises(RuntimeError, match="access denied"):
         module.ExternalIndexTTSSubprocessProxy._terminate_process_tree(RunningProcess(), 0.3)
 
     assert observed["command"] == ["taskkill", "/PID", "4747", "/T", "/F"]
-    assert observed["kwargs"]["timeout"] == 0.3
+    assert 0 < observed["kwargs"]["timeout"] <= 0.15
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(os.name != "nt", reason="Windows process-tree fallback contract")
+def test_windows_tree_kill_falls_back_to_psutil_and_exits_real_parent_and_child(monkeypatch):
+    module = _load_external_index_subprocess_module()
+    parent_script = (
+        "import subprocess,sys,time; "
+        "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
+        "print(child.pid,flush=True); time.sleep(60)"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", parent_script],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+    )
+    assert process.stdout is not None
+    child_pid = int(process.stdout.readline().strip())
+    real_run = subprocess.run
+
+    def failed_taskkill(command, **kwargs):
+        return subprocess.CompletedProcess(command, 5, "", "simulated taskkill denial")
+
+    monkeypatch.setattr(module.subprocess, "run", failed_taskkill)
+    started = time.monotonic()
+    try:
+        diagnostic = module.ExternalIndexTTSSubprocessProxy._terminate_process_tree(
+            process,
+            1.5,
+        )
+        elapsed = time.monotonic() - started
+
+        assert "simulated taskkill denial" in diagnostic
+        assert elapsed < 1.8
+        assert process.poll() is not None
+        assert not module.psutil.pid_exists(child_pid)
+    finally:
+        if process.poll() is None or module.psutil.pid_exists(child_pid):
+            real_run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=3,
+                check=False,
+            )
+
+
+@pytest.mark.unit
+def test_windows_tree_kill_reports_stubborn_descendant_within_hard_deadline(monkeypatch):
+    module = _load_external_index_subprocess_module()
+    observed_waits = []
+
+    class StubbornProcess:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def children(self, recursive=False):
+            assert recursive is True
+            return [child] if self.pid == 4848 else []
+
+        @staticmethod
+        def is_running():
+            return True
+
+        @staticmethod
+        def terminate():
+            pass
+
+        @staticmethod
+        def kill():
+            pass
+
+    root = StubbornProcess(4848)
+    child = StubbornProcess(4949)
+
+    class RunningPopen:
+        pid = 4848
+
+        @staticmethod
+        def poll():
+            return None
+
+    monkeypatch.setattr(module.os, "name", "nt")
+    monkeypatch.setattr(module.psutil, "Process", lambda pid: root)
+    monkeypatch.setattr(module.psutil, "pid_exists", lambda pid: True)
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda command, **kwargs: module.subprocess.CompletedProcess(
+            command,
+            5,
+            "",
+            "simulated taskkill denial",
+        ),
+    )
+
+    def wait_procs(processes, timeout):
+        observed_waits.append(timeout)
+        time.sleep(timeout)
+        return [], list(processes)
+
+    monkeypatch.setattr(module.psutil, "wait_procs", wait_procs)
+    started = time.monotonic()
+    with pytest.raises(RuntimeError) as error:
+        module.ExternalIndexTTSSubprocessProxy._terminate_process_tree(RunningPopen(), 0.2)
+    elapsed = time.monotonic() - started
+
+    assert "simulated taskkill denial" in str(error.value)
+    assert "4949" in str(error.value)
+    assert elapsed < 0.35
+    assert sum(observed_waits) <= 0.21
+
+
+def _install_failing_temporary_directory(monkeypatch, module, message):
+    real_temporary_directory = module.tempfile.TemporaryDirectory
+
+    class FailingTemporaryDirectory:
+        def __init__(self, *args, **kwargs):
+            kwargs.pop("ignore_cleanup_errors", None)
+            self._delegate = real_temporary_directory(*args, **kwargs)
+            self.name = self._delegate.name
+
+        def __enter__(self):
+            return self.name
+
+        def __exit__(self, exc_type, exc, traceback):
+            self.cleanup()
+
+        def cleanup(self):
+            self._delegate.cleanup()
+            raise OSError(message)
+
+    monkeypatch.setattr(module.tempfile, "TemporaryDirectory", FailingTemporaryDirectory)
+
+
+@pytest.mark.unit
+def test_external_index_success_surfaces_temporary_cleanup_failure(monkeypatch, tmp_path):
+    module = _load_external_index_subprocess_module()
+    source_root, model_dir, _, voice_path, temp_root = _prepare_external_index_runtime(tmp_path)
+    _install_failing_temporary_directory(monkeypatch, module, "cleanup locked")
+
+    class SuccessfulProcess:
+        pid = 5050
+        returncode = 0
+
+        def __init__(self, command, **kwargs):
+            self.command = command
+
+        def communicate(self, timeout=None):
+            manifest = json.loads(Path(self.command[2]).read_text(encoding="utf-8"))
+            with wave.open(manifest["output_path"], "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(16000)
+                handle.writeframes(b"\x01\x00" * 32)
+            return "", ""
+
+    monkeypatch.setattr(module.subprocess, "Popen", SuccessfulProcess)
+    proxy = module.ExternalIndexTTSSubprocessProxy(
+        source_root=source_root,
+        model_dir=model_dir,
+        device="cuda:0",
+        use_fp16=True,
+        temp_root=temp_root,
+    )
+
+    with pytest.raises(RuntimeError, match="temporary directory cleanup failed: cleanup locked"):
+        proxy.infer(spk_audio_prompt=str(voice_path), text="成功后清理。", output_path=None)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("timeout", "expected_type", "primary_message"),
+    [
+        (False, RuntimeError, "official inference exploded"),
+        (True, TimeoutError, "exceeded 0.1s"),
+    ],
+)
+def test_external_index_primary_error_survives_temporary_cleanup_failure(
+    monkeypatch,
+    tmp_path,
+    timeout,
+    expected_type,
+    primary_message,
+):
+    module = _load_external_index_subprocess_module()
+    source_root, model_dir, _, voice_path, temp_root = _prepare_external_index_runtime(tmp_path)
+    _install_failing_temporary_directory(monkeypatch, module, "cleanup locked")
+    should_timeout = timeout
+
+    class FailedProcess:
+        pid = 5151
+        returncode = 4
+
+        def __init__(self, command, **kwargs):
+            self.calls = 0
+
+        def communicate(self, timeout=None):
+            self.calls += 1
+            if should_timeout and self.calls == 1:
+                raise module.subprocess.TimeoutExpired("indextts", timeout)
+            return "", "official inference exploded"
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr(module.subprocess, "Popen", FailedProcess)
+    monkeypatch.setattr(
+        module.ExternalIndexTTSSubprocessProxy,
+        "_terminate_process_tree",
+        staticmethod(lambda process, grace: ""),
+    )
+    proxy = module.ExternalIndexTTSSubprocessProxy(
+        source_root=source_root,
+        model_dir=model_dir,
+        device="cuda:0",
+        use_fp16=True,
+        timeout_seconds=0.1 if timeout else 900,
+        termination_grace_seconds=0.1,
+        temp_root=temp_root,
+    )
+
+    with pytest.raises(expected_type) as error:
+        proxy.infer(spk_audio_prompt=str(voice_path), text="主错误优先。", output_path=None)
+
+    assert primary_message in str(error.value)
+    assert "temporary directory cleanup failed: cleanup locked" in str(error.value)
 
 
 @pytest.mark.unit
