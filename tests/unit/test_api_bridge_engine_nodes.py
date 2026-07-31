@@ -311,6 +311,123 @@ def test_gpt_adapter_uses_registered_checkout_runtime_without_inprocess_import(m
 
 
 @pytest.mark.unit
+def test_gpt_adapter_uses_legacy_environment_checkout_when_home_is_omitted(monkeypatch, tmp_path):
+    import engines.adapters.gpt_sovits_adapter as adapter_module
+    from engines.gpt_sovits.runtime import reset_gpt_sovits_checkout_for_tests
+
+    source_root = tmp_path / "legacy-gpt-source"
+    (source_root / "GPT_SoVITS" / "eres2net").mkdir(parents=True)
+    observed = {}
+
+    class FakeExternalRuntime:
+        def __init__(self, **kwargs):
+            observed.update(kwargs)
+            self.source_root = Path(kwargs["source_root"]).resolve()
+            self.python_executable = self.source_root / ".venv" / "Scripts" / "python.exe"
+
+        def cleanup(self):
+            pass
+
+    reset_gpt_sovits_checkout_for_tests()
+    monkeypatch.setenv("GPT_SOVITS_PATH", str(source_root))
+    monkeypatch.setattr(adapter_module, "ExternalGPTSovitsSubprocessProxy", FakeExternalRuntime)
+    try:
+        adapter_module.GPTSovitsAdapter().initialize_engine(
+            gpt_weight="C:/gpt/s1.ckpt",
+            sovits_weight="C:/gpt/s2.pth",
+            bert_path="C:/gpt/bert",
+            cnhubert_path="C:/gpt/cnhubert",
+            device="cpu",
+            use_fp16=False,
+        )
+    finally:
+        reset_gpt_sovits_checkout_for_tests()
+
+    assert observed["source_root"] == str(source_root.resolve())
+
+
+@pytest.mark.unit
+def test_gpt_adapter_requires_explicit_or_environment_checkout(monkeypatch):
+    import engines.adapters.gpt_sovits_adapter as adapter_module
+    from engines.gpt_sovits.runtime import reset_gpt_sovits_checkout_for_tests
+
+    reset_gpt_sovits_checkout_for_tests()
+    monkeypatch.delenv("GPT_SOVITS_PATH", raising=False)
+    with pytest.raises(
+        RuntimeError,
+        match="gpt_sovits_home or GPT_SOVITS_PATH must point to an official GPT-SoVITS checkout",
+    ):
+        adapter_module.GPTSovitsAdapter().initialize_engine(
+            gpt_weight="C:/gpt/s1.ckpt",
+            sovits_weight="C:/gpt/s2.pth",
+            bert_path="C:/gpt/bert",
+            cnhubert_path="C:/gpt/cnhubert",
+            device="cpu",
+            use_fp16=False,
+        )
+
+
+@pytest.mark.unit
+def test_gpt_character_profile_keeps_registered_checkout_and_interpreter(monkeypatch, tmp_path):
+    import engines.adapters.gpt_sovits_adapter as adapter_module
+
+    source_root = tmp_path / "registered-gpt-source"
+    python_executable = tmp_path / "portable" / "python.exe"
+    created = []
+
+    class FakeExternalRuntime:
+        def __init__(self, **kwargs):
+            created.append(dict(kwargs))
+            self.source_root = Path(kwargs["source_root"]).resolve()
+            self.python_executable = Path(kwargs["python_executable"]).resolve()
+
+        def run(self, _inputs):
+            return 32000, adapter_module.np.full(320, len(created), dtype=adapter_module.np.int16)
+
+        def cleanup(self):
+            pass
+
+    parser = types.SimpleNamespace(
+        CHARACTER_TAG_PATTERN=types.SimpleNamespace(search=lambda _text: True),
+        split_by_character=lambda _text, include_language=False: [("Alice", "profile text", None)],
+    )
+    monkeypatch.setattr(adapter_module, "ExternalGPTSovitsSubprocessProxy", FakeExternalRuntime)
+    monkeypatch.setattr(adapter_module, "character_parser", parser)
+
+    adapter = adapter_module.GPTSovitsAdapter()
+    adapter.initialize_engine(
+        gpt_weight="base-gpt.ckpt",
+        sovits_weight="base-sovits.pth",
+        bert_path="base-bert",
+        cnhubert_path="base-cnhubert",
+        device="cpu",
+        use_fp16=False,
+        gpt_sovits_home=str(source_root),
+        python_executable=str(python_executable),
+    )
+    adapter._character_profiles = {
+        "Alice": {
+            "gpt_weight": "alice-gpt.ckpt",
+            "sovits_weight": "alice-sovits.pth",
+            "bert_path": "alice-bert",
+            "cnhubert_path": "alice-cnhubert",
+        }
+    }
+
+    waveform, sample_rate = adapter.generate(
+        text="[Alice] profile text",
+        ref_audio_path="voice.wav",
+        ref_text="reference",
+    )
+
+    assert sample_rate == 32000
+    assert waveform.shape == (1, 320)
+    assert created[-1]["gpt_weight"] == "alice-gpt.ckpt"
+    assert created[-1]["source_root"] == str(source_root)
+    assert created[-1]["python_executable"] == str(python_executable)
+
+
+@pytest.mark.unit
 def test_gpt_bridge_forwards_private_interpreter_without_public_input(monkeypatch):
     resource = types.SimpleNamespace(
         resource_id="local-resource",

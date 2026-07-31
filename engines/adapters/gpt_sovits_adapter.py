@@ -78,6 +78,9 @@ class GPTSovitsAdapter:
         version: str = "v2",
     ) -> None:
         if not gpt_sovits_home:
+            context = configure_gpt_sovits_source()
+            gpt_sovits_home = str(context.checkout_root) if context is not None else None
+        if not gpt_sovits_home:
             raise RuntimeError("gpt_sovits_home or GPT_SOVITS_PATH must point to an official GPT-SoVITS checkout")
         resolved_device = resolve_torch_device(device)
         normalized_fp16 = bool(use_fp16) and resolved_device != "cpu"
@@ -238,10 +241,14 @@ class GPTSovitsAdapter:
                 continue
             profile = self._character_profiles.get(character or "", {})
             if "gpt_weight" in profile and "sovits_weight" in profile:
+                active_source_root = str(self.runtime.source_root)
+                active_python_executable = str(self.runtime.python_executable)
                 self.initialize_engine(
                     profile["gpt_weight"], profile["sovits_weight"],
                     profile.get("bert_path", ""), profile.get("cnhubert_path", ""),
                     self._device, self._use_fp16, version=profile.get("version", self._version),
+                    gpt_sovits_home=active_source_root,
+                    python_executable=active_python_executable,
                 )
             waveform, sample_rate = self._generate_single(
                 segment.strip(), text_lang, profile.get("ref_audio", ref_audio),
