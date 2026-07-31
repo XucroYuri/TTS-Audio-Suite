@@ -13,7 +13,11 @@ from typing import Any
 import numpy as np
 import soundfile
 
-from engines.index_tts.external_subprocess import ExternalIndexTTSSubprocessProxy
+from engines.index_tts.external_subprocess import (
+    ExternalIndexTTSSubprocessProxy,
+    InterruptCheck,
+    _comfyui_interrupt_requested,
+)
 
 
 class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
@@ -34,6 +38,7 @@ class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
         timeout_seconds: float = 900.0,
         termination_grace_seconds: float = 5.0,
         temp_root: str | Path | None = None,
+        interrupt_check: InterruptCheck | None = None,
     ) -> None:
         self.source_root = Path(source_root).resolve()
         self.gpt_weight = Path(gpt_weight).resolve()
@@ -46,6 +51,7 @@ class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
         self.timeout_seconds = float(timeout_seconds)
         self.termination_grace_seconds = float(termination_grace_seconds)
         self.temp_root = Path(temp_root).resolve() if temp_root is not None else None
+        self.interrupt_check = interrupt_check or _comfyui_interrupt_requested
         self.python_executable = (
             Path(python_executable).resolve()
             if python_executable is not None
@@ -150,16 +156,7 @@ class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
                 popen_kwargs["start_new_session"] = True
 
             process = self._start_process(command, popen_kwargs)
-            try:
-                stdout, stderr = process.communicate(timeout=self.timeout_seconds)
-            except subprocess.TimeoutExpired as exc:
-                stdout, stderr, cleanup_diagnostic = self._cleanup_timed_out_process(process)
-                diagnostic = (stderr or stdout or str(exc)).strip()
-                if cleanup_diagnostic:
-                    diagnostic = f"{diagnostic}; cleanup: {cleanup_diagnostic}"
-                raise TimeoutError(
-                    f"External GPT-SoVITS subprocess exceeded {self.timeout_seconds:g}s: {diagnostic}"
-                ) from exc
+            stdout, stderr = self._communicate_with_control(process, "GPT-SoVITS")
 
             try:
                 self._close_windows_job(process)

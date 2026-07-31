@@ -950,7 +950,7 @@ def test_external_gpt_subprocess_preserves_registered_lineage_offline_and_cleans
     assert observed["command"][0] == str(python_executable)
     assert Path(observed["command"][1]).name == "external_subprocess_runner.py"
     assert observed["kwargs"]["cwd"] == str(source_root)
-    assert observed["timeout"] == 321.0
+    assert 0 < observed["timeout"] <= 0.25
     child_environment = observed["kwargs"]["env"]
     assert child_environment["TTS_AUDIO_SUITE_OFFLINE"] == "1"
     assert child_environment["HF_HUB_OFFLINE"] == "1"
@@ -1136,6 +1136,171 @@ def _prepare_external_cosyvoice_runtime(tmp_path):
     return source_root, model_dir, python_executable, voice_path, temp_root
 
 
+def _assert_registered_engine_interrupts_during_sliced_wait(
+    monkeypatch,
+    module,
+    proxy,
+    invoke_real_engine,
+    temp_root,
+    engine_label,
+):
+    """Exercise the registered public call while its runner is still active."""
+    communicate_timeouts = []
+    created_processes = []
+    terminated_processes = []
+
+    class RunningProcess:
+        returncode = None
+
+        def __init__(self, command, **kwargs):
+            del command, kwargs
+            created_processes.append(self)
+
+        def communicate(self, timeout=None):
+            communicate_timeouts.append(timeout)
+            if self.returncode is None:
+                raise module.subprocess.TimeoutExpired("runner", timeout)
+            return "", ""
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    def terminate_process_tree(process, grace_seconds):
+        del grace_seconds
+        terminated_processes.append(process)
+        process.returncode = -9
+        return "runner tree terminated"
+
+    monkeypatch.setattr(module.subprocess, "Popen", RunningProcess)
+    monkeypatch.setattr(
+        type(proxy),
+        "_terminate_process_tree",
+        staticmethod(terminate_process_tree),
+    )
+
+    with pytest.raises(InterruptedError, match=engine_label):
+        invoke_real_engine(proxy)
+
+    assert communicate_timeouts
+    assert all(0 < timeout <= 0.25 for timeout in communicate_timeouts)
+    assert len(created_processes) == 1
+    assert terminated_processes == [created_processes[0]]
+    assert created_processes[0].returncode == -9
+    assert not list(temp_root.iterdir())
+
+
+@pytest.mark.unit
+def test_registered_index_interrupts_during_sliced_wait(monkeypatch, tmp_path):
+    module = _load_external_index_subprocess_module()
+    source_root, model_dir, _, voice_path, temp_root = _prepare_external_index_runtime(tmp_path)
+    checks = iter((False, True))
+    proxy = module.ExternalIndexTTSSubprocessProxy(
+        source_root=source_root,
+        model_dir=model_dir,
+        device="cuda:0",
+        use_fp16=True,
+        timeout_seconds=321.0,
+        termination_grace_seconds=0.2,
+        temp_root=temp_root,
+        interrupt_check=lambda: next(checks, True),
+    )
+
+    _assert_registered_engine_interrupts_during_sliced_wait(
+        monkeypatch,
+        module,
+        proxy,
+        lambda engine: engine.infer(
+            spk_audio_prompt=str(voice_path),
+            text="interrupt the external runner",
+            output_path=None,
+        ),
+        temp_root,
+        "IndexTTS",
+    )
+
+
+@pytest.mark.unit
+def test_registered_gpt_sovits_interrupts_during_sliced_wait(monkeypatch, tmp_path):
+    module = _load_external_gpt_subprocess_module()
+    (
+        source_root,
+        python_executable,
+        gpt_weight,
+        sovits_weight,
+        bert_path,
+        cnhubert_path,
+        voice_path,
+        temp_root,
+    ) = _prepare_external_gpt_runtime(tmp_path)
+    checks = iter((False, True))
+    proxy = module.ExternalGPTSovitsSubprocessProxy(
+        source_root=source_root,
+        gpt_weight=gpt_weight,
+        sovits_weight=sovits_weight,
+        bert_path=bert_path,
+        cnhubert_path=cnhubert_path,
+        device="cuda",
+        use_fp16=True,
+        version="v2",
+        python_executable=python_executable,
+        timeout_seconds=321.0,
+        termination_grace_seconds=0.2,
+        temp_root=temp_root,
+        interrupt_check=lambda: next(checks, True),
+    )
+
+    _assert_registered_engine_interrupts_during_sliced_wait(
+        monkeypatch,
+        module,
+        proxy,
+        lambda engine: engine.run(
+            {
+                "text": "interrupt the external runner",
+                "text_lang": "en",
+                "ref_audio_path": str(voice_path),
+                "prompt_text": "reference",
+                "prompt_lang": "en",
+            }
+        ),
+        temp_root,
+        "GPT-SoVITS",
+    )
+
+
+@pytest.mark.unit
+def test_registered_cosyvoice_interrupts_during_sliced_wait(monkeypatch, tmp_path):
+    module = _load_external_cosyvoice_subprocess_module()
+    source_root, model_dir, _, voice_path, temp_root = _prepare_external_cosyvoice_runtime(tmp_path)
+    checks = iter((False, True))
+    proxy = module.ExternalCosyVoiceSubprocessProxy(
+        source_root=source_root,
+        model_dir=model_dir,
+        device="cuda",
+        use_fp16=True,
+        timeout_seconds=321.0,
+        termination_grace_seconds=0.2,
+        temp_root=temp_root,
+        interrupt_check=lambda: next(checks, True),
+    )
+
+    _assert_registered_engine_interrupts_during_sliced_wait(
+        monkeypatch,
+        module,
+        proxy,
+        lambda engine: list(
+            engine.inference_cross_lingual(
+                tts_text="interrupt the external runner",
+                prompt_wav=str(voice_path),
+            )
+        ),
+        temp_root,
+        "CosyVoice",
+    )
+
+
 @pytest.mark.unit
 def test_external_cosyvoice_subprocess_uses_checkout_venv_offline_and_cleans_temp(monkeypatch, tmp_path):
     module = _load_external_cosyvoice_subprocess_module()
@@ -1184,7 +1349,7 @@ def test_external_cosyvoice_subprocess_uses_checkout_venv_offline_and_cleans_tem
     assert observed["command"][0] == str(python_executable)
     assert Path(observed["command"][1]).name == "external_subprocess_runner.py"
     assert observed["kwargs"]["cwd"] == str(source_root)
-    assert observed["timeout"] == 321.0
+    assert 0 < observed["timeout"] <= 0.25
     child_environment = observed["kwargs"]["env"]
     assert child_environment["TTS_AUDIO_SUITE_OFFLINE"] == "1"
     assert child_environment["HF_HUB_OFFLINE"] == "1"
