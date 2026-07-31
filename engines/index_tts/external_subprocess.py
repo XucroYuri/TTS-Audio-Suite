@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable
 import ctypes
 from ctypes import wintypes
 import json
@@ -23,6 +24,35 @@ import soundfile
 _WINDOWS_CREATE_SUSPENDED = 0x00000004
 _WINDOWS_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 _WINDOWS_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+
+
+InterruptCheck = Callable[[], bool]
+
+
+def _comfyui_interrupt_requested() -> bool:
+    try:
+        from comfy.model_management import processing_interrupted
+    except ImportError:
+        return False
+    return bool(processing_interrupted())
+
+
+def _raise_processing_interrupted(engine_label: str, diagnostic: str) -> None:
+    try:
+        from comfy.model_management import throw_exception_if_processing_interrupted
+    except ImportError:
+        pass
+    else:
+        throw_exception_if_processing_interrupted()
+    raise InterruptedError(f"{engine_label} external subprocess interrupted: {diagnostic}")
+
+
+def _clear_processing_interrupt() -> None:
+    try:
+        from comfy.model_management import interrupt_current_processing
+    except ImportError:
+        return
+    interrupt_current_processing(False)
 
 
 class _WindowsIOCounters(ctypes.Structure):
@@ -134,6 +164,7 @@ class ExternalIndexTTSSubprocessProxy:
         timeout_seconds: float = 900.0,
         termination_grace_seconds: float = 5.0,
         temp_root: str | Path | None = None,
+        interrupt_check: InterruptCheck | None = None,
     ) -> None:
         self.source_root = Path(source_root).resolve()
         self.model_dir = Path(model_dir).resolve()
@@ -146,6 +177,7 @@ class ExternalIndexTTSSubprocessProxy:
         self.timeout_seconds = float(timeout_seconds)
         self.termination_grace_seconds = float(termination_grace_seconds)
         self.temp_root = Path(temp_root).resolve() if temp_root is not None else None
+        self.interrupt_check = interrupt_check or _comfyui_interrupt_requested
         self.python_executable = self._resolve_python_executable()
         self.runner_path = Path(__file__).with_name("external_subprocess_runner.py").resolve()
         self._validate_runtime()
@@ -239,16 +271,7 @@ class ExternalIndexTTSSubprocessProxy:
                 popen_kwargs["start_new_session"] = True
 
             process = self._start_process(command, popen_kwargs)
-            try:
-                stdout, stderr = process.communicate(timeout=self.timeout_seconds)
-            except subprocess.TimeoutExpired as exc:
-                stdout, stderr, cleanup_diagnostic = self._cleanup_timed_out_process(process)
-                diagnostic = (stderr or stdout or str(exc)).strip()
-                if cleanup_diagnostic:
-                    diagnostic = f"{diagnostic}; cleanup: {cleanup_diagnostic}"
-                raise TimeoutError(
-                    f"External IndexTTS subprocess exceeded {self.timeout_seconds:g}s: {diagnostic}"
-                ) from exc
+            stdout, stderr = self._communicate_with_control(process, "IndexTTS")
 
             try:
                 self._close_windows_job(process)
@@ -384,6 +407,40 @@ class ExternalIndexTTSSubprocessProxy:
         except Exception as exc:
             notes.append(f"final process status check failed: {exc}")
         return stdout, stderr, "; ".join(notes)
+
+    def _communicate_with_control(self, process, engine_label: str) -> tuple[str, str]:
+        deadline = time.monotonic() + self.timeout_seconds
+        timeout_error: subprocess.TimeoutExpired | None = None
+        while True:
+            if self.interrupt_check():
+                stdout, stderr, cleanup = self._cleanup_timed_out_process(process)
+                diagnostic = (stderr or stdout or "interrupted").strip()
+                if cleanup:
+                    diagnostic = f"{diagnostic}; cleanup: {cleanup}"
+                try:
+                    exit_verified = process.poll() is not None
+                except Exception as exc:
+                    exit_verified = False
+                    diagnostic = f"{diagnostic}; final status check failed: {exc}"
+                if not exit_verified:
+                    _clear_processing_interrupt()
+                    raise RuntimeError(
+                        f"{engine_label} interruption cleanup failed: {diagnostic}"
+                    )
+                _raise_processing_interrupted(engine_label, diagnostic)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                stdout, stderr, cleanup = self._cleanup_timed_out_process(process)
+                diagnostic = (stderr or stdout or str(timeout_error or "deadline exceeded")).strip()
+                if cleanup:
+                    diagnostic = f"{diagnostic}; cleanup: {cleanup}"
+                raise TimeoutError(
+                    f"External {engine_label} subprocess exceeded {self.timeout_seconds:g}s: {diagnostic}"
+                ) from timeout_error
+            try:
+                return process.communicate(timeout=min(0.25, remaining))
+            except subprocess.TimeoutExpired as exc:
+                timeout_error = exc
 
     @staticmethod
     def _remaining_before(deadline: float, action: str, notes: list[str]) -> float:

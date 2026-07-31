@@ -660,6 +660,7 @@ def test_unregistered_cosyvoice_adapter_preserves_waveform_cache():
 
 
 def _load_external_index_subprocess_module():
+    sys.modules["comfy.model_management"].processing_interrupted.return_value = False
     path = REPO_ROOT / "engines" / "index_tts" / "external_subprocess.py"
     assert path.is_file(), "plugin-owned external IndexTTS subprocess adapter is missing"
     spec = importlib.util.spec_from_file_location("external_index_subprocess_test", path)
@@ -667,6 +668,95 @@ def _load_external_index_subprocess_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def test_external_wait_returns_output_without_interrupt(monkeypatch):
+    module = _load_external_index_subprocess_module()
+    proxy = object.__new__(module.ExternalIndexTTSSubprocessProxy)
+    proxy.timeout_seconds = 1.0
+    proxy.termination_grace_seconds = 0.2
+    proxy.interrupt_check = lambda: False
+
+    class Finished:
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return "ok", ""
+
+    assert proxy._communicate_with_control(Finished(), "IndexTTS") == ("ok", "")
+
+
+def test_external_wait_interrupts_and_cleans_tree(monkeypatch):
+    module = _load_external_index_subprocess_module()
+    proxy = object.__new__(module.ExternalIndexTTSSubprocessProxy)
+    proxy.timeout_seconds = 10.0
+    proxy.termination_grace_seconds = 0.2
+    checks = iter((False, True))
+    proxy.interrupt_check = lambda: next(checks, True)
+    cleaned = []
+
+    class Running:
+        returncode = None
+
+        def communicate(self, timeout=None):
+            raise module.subprocess.TimeoutExpired("runner", timeout)
+
+        def poll(self):
+            return self.returncode
+
+    def cleanup(process):
+        process.returncode = -9
+        cleaned.append(process)
+        return "partial", "", "tree exited"
+
+    monkeypatch.setattr(proxy, "_cleanup_timed_out_process", cleanup)
+    process = Running()
+    with pytest.raises(InterruptedError, match="IndexTTS external subprocess interrupted"):
+        proxy._communicate_with_control(process, "IndexTTS")
+    assert cleaned == [process]
+
+
+def test_external_wait_reports_cleanup_failure_instead_of_false_interrupt_success(monkeypatch):
+    module = _load_external_index_subprocess_module()
+    proxy = object.__new__(module.ExternalIndexTTSSubprocessProxy)
+    proxy.timeout_seconds = 10.0
+    proxy.termination_grace_seconds = 0.01
+    proxy.interrupt_check = lambda: True
+
+    class Stuck:
+        returncode = None
+
+        def communicate(self, timeout=None):
+            raise module.subprocess.TimeoutExpired("runner", timeout)
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(
+        proxy,
+        "_cleanup_timed_out_process",
+        lambda process: ("", "", "process exit could not be verified"),
+    )
+    with pytest.raises(RuntimeError, match="interruption cleanup failed"):
+        proxy._communicate_with_control(Stuck(), "IndexTTS")
+
+
+def test_external_wait_preserves_timeout_category(monkeypatch):
+    module = _load_external_index_subprocess_module()
+    proxy = object.__new__(module.ExternalIndexTTSSubprocessProxy)
+    proxy.timeout_seconds = 0.01
+    proxy.termination_grace_seconds = 0.2
+    proxy.interrupt_check = lambda: False
+
+    class Running:
+        returncode = None
+
+        def communicate(self, timeout=None):
+            raise module.subprocess.TimeoutExpired("runner", timeout)
+
+    monkeypatch.setattr(proxy, "_cleanup_timed_out_process", lambda process: ("", "slow", "tree exited"))
+    with pytest.raises(TimeoutError, match="exceeded 0.01s"):
+        proxy._communicate_with_control(Running(), "IndexTTS")
 
 
 def _prepare_external_index_runtime(tmp_path):
@@ -1228,7 +1318,7 @@ def test_external_index_subprocess_uses_checkout_venv_and_cleans_temp(monkeypatc
     assert observed["command"][0] == str(python_executable)
     assert Path(observed["command"][1]).name == "external_subprocess_runner.py"
     assert observed["kwargs"]["cwd"] == str(source_root)
-    assert observed["timeout"] == 321.0
+    assert observed["timeout"] == 0.25
     child_environment = observed["kwargs"]["env"]
     assert child_environment["PYTHONDONTWRITEBYTECODE"] == "1"
     pycache_prefix = Path(child_environment["PYTHONPYCACHEPREFIX"])
@@ -1290,7 +1380,7 @@ def test_external_index_subprocess_terminates_tree_on_timeout_and_cleans_temp(mo
 
         def communicate(self, timeout=None):
             self.calls += 1
-            if self.calls == 1:
+            if self.returncode is None:
                 raise module.subprocess.TimeoutExpired("indextts", timeout)
             return ("", "child stopped")
 
@@ -1346,7 +1436,7 @@ def test_external_index_timeout_falls_back_to_direct_kill_when_tree_kill_fails(m
 
         def communicate(self, timeout=None):
             self.timeouts.append(timeout)
-            if len(self.timeouts) == 1:
+            if self.returncode is None:
                 raise module.subprocess.TimeoutExpired("indextts", timeout)
             return ("", "direct child stopped")
 
@@ -1379,8 +1469,8 @@ def test_external_index_timeout_falls_back_to_direct_kill_when_tree_kill_fails(m
     assert "exceeded 0.5s" in str(error.value)
     assert "taskkill denied" in str(error.value)
     assert instances[0].kill_calls == 1
-    assert instances[0].timeouts[0] == 0.5
-    assert 0 < instances[0].timeouts[1] <= 0.21
+    assert 0 < instances[0].timeouts[0] <= 0.25
+    assert 0 < instances[0].timeouts[-1] <= 0.21
     assert not list(temp_root.iterdir())
 
 
@@ -1431,8 +1521,8 @@ def test_external_index_timeout_cleanup_remains_bounded_when_process_will_not_ex
     assert "direct kill denied" in str(error.value)
     assert "cleanup communicate exceeded remaining" in str(error.value)
     assert "of 0.2s grace" in str(error.value)
-    assert instances[0].timeouts[0] == 0.5
-    assert 0 < instances[0].timeouts[1] <= 0.21
+    assert 0 < instances[0].timeouts[0] <= 0.25
+    assert 0 < instances[0].timeouts[-1] <= 0.21
     assert not list(temp_root.iterdir())
 
 
@@ -1450,9 +1540,7 @@ def test_external_index_timeout_reports_when_cleanup_cannot_verify_process_exit(
 
         def communicate(self, timeout=None):
             self.calls += 1
-            if self.calls == 1:
-                raise module.subprocess.TimeoutExpired("indextts", timeout)
-            return ("", "")
+            raise module.subprocess.TimeoutExpired("indextts", timeout)
 
         def poll(self):
             return None
@@ -1963,7 +2051,7 @@ def test_external_index_primary_error_survives_temporary_cleanup_failure(
 
         def communicate(self, timeout=None):
             self.calls += 1
-            if should_timeout and self.calls == 1:
+            if should_timeout:
                 raise module.subprocess.TimeoutExpired("indextts", timeout)
             return "", "official inference exploded"
 
