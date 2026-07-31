@@ -193,33 +193,55 @@ def print_critical_versions():
     print(f"ℹ️ Critical package versions: {', '.join(version_info)}")
 
 def check_ffmpeg_availability():
-    """Check ffmpeg availability and log status"""
+    """Check ffmpeg + ffprobe availability and log actionable status.
+
+    F5-TTS reference-audio preprocessing uses pydub, which requires BOTH
+    ffmpeg and ffprobe on PATH. Missing either causes silent one-second
+    zero-tensor outputs that look like successful synthesis.
+    """
     try:
-        # Load ffmpeg_utils directly by file path to avoid package import issues
         ffmpeg_utils_path = os.path.join(os.path.dirname(__file__), "utils", "ffmpeg_utils.py")
         spec = importlib.util.spec_from_file_location("ffmpeg_utils_module", ffmpeg_utils_path)
         ffmpeg_utils_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(ffmpeg_utils_module)
 
-        if ffmpeg_utils_module.FFmpegUtils.is_available():
-            # Only show when unavailable (problem)
-            pass
-        else:
-            print("⚠️ FFmpeg not found - using fallback audio processing (reduced quality)")
-            print("💡 Install FFmpeg for optimal performance: https://ffmpeg.org/download.html")
+        ffmpeg_ok = ffmpeg_utils_module.FFmpegUtils.is_available()
+        ffprobe_ok = ffmpeg_utils_module.FFmpegUtils.is_ffprobe_available()
+        toolchain_ok = ffmpeg_ok and ffprobe_ok
+
+        if toolchain_ok:
+            return  # silent on success; toolchain is ready
+
+        missing = []
+        if not ffmpeg_ok:
+            missing.append("ffmpeg")
+        if not ffprobe_ok:
+            missing.append("ffprobe")
+
+        print(f"⚠️  TTS Audio Suite: ffmpeg/ffprobe toolchain incomplete. Missing: {', '.join(missing)}")
+        print(f"💡 F5-TTS and other engines require both ffmpeg AND ffprobe on PATH.")
+        print(f"💡 Without them, TTS synthesis may complete successfully but produce silent audio.")
+        print(f"💡 Install with:")
+        print(f"     Windows: winget install --id Gyan.FFmpeg --exact")
+        print(f"     macOS:   brew install ffmpeg")
+        print(f"     Linux:   sudo apt-get install ffmpeg")
+        print(f"💡 Then restart ComfyUI.")
     except ImportError:
-        # Fallback check if utils not available yet
+        # Fallback direct probe if utils module is unavailable
         try:
             import subprocess
-            result = subprocess.run(['ffmpeg', '-version'], capture_output=True, timeout=5)
-            if result.returncode == 0:
-                # Only show when unavailable (problem)
-                pass
-            else:
-                print("⚠️ FFmpeg not found - using fallback audio processing (reduced quality)")
+            ffmpeg_kw = subprocess.run(['ffmpeg', '-version'], capture_output=True, timeout=5)
+            ffprobe_kw = subprocess.run(['ffprobe', '-version'], capture_output=True, timeout=5)
+            ffmpeg_ok = ffmpeg_kw.returncode == 0
+            ffprobe_ok = ffprobe_kw.returncode == 0
+            if ffmpeg_ok and ffprobe_ok:
+                return
+            missing = []
+            if not ffmpeg_ok: missing.append("ffmpeg")
+            if not ffprobe_ok: missing.append("ffprobe")
+            print(f"⚠️  TTS Audio Suite: missing ffmpeg/ffprobe: {', '.join(missing)}")
         except Exception:
-            print("⚠️ FFmpeg not found - using fallback audio processing (reduced quality)")
-            print("💡 Install FFmpeg for optimal performance: https://ffmpeg.org/download.html")
+            print("⚠️  TTS Audio Suite: cannot probe ffmpeg/ffprobe — TTS preprocessing may fail")
 
 # Print versions and check dependencies immediately for troubleshooting
 check_dependencies()

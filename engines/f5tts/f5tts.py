@@ -815,6 +815,14 @@ class ChatterBoxF5TTS:
         
         if not os.path.exists(ref_audio_path):
             raise FileNotFoundError(f"Reference audio file not found: {ref_audio_path}")
+
+        # Preflight: F5-TTS preprocessing requires both ffmpeg and ffprobe.
+        # Without them, pydub.AudioSegment.from_file() raises WinError 2,
+        # the exception handler converts it to RuntimeError, and ComfyUI
+        # returns a one-second zero tensor that looks like success.
+        # Fail fast here with a clear install instruction.
+        from utils.ffmpeg_utils import FFmpegUtils
+        FFmpegUtils.require_audio_toolchain(feature="F5-TTS reference audio preprocessing")
         
         try:
             # Generate audio using F5-TTS (suppress debug messages, keep progress bars)
