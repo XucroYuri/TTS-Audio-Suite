@@ -38,6 +38,25 @@ def test_fish_source_restore_accepts_namespace_package(tmp_path, monkeypatch):
 
 
 @pytest.mark.unit
+def test_module_available_finds_nested_module_without_importing_parent(tmp_path, monkeypatch):
+    package_root = tmp_path / "dots_tts"
+    package_root.mkdir()
+    (package_root / "__init__.py").write_text(
+        "raise RuntimeError('parent package must not be imported during availability probing')\n",
+        encoding="utf-8",
+    )
+    (package_root / "runtime.py").write_text("", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "dots_tts", raising=False)
+    monkeypatch.delitem(sys.modules, "dots_tts.runtime", raising=False)
+
+    installer = INSTALL_MODULE.TTSAudioInstaller()
+
+    assert installer.module_available("dots_tts.runtime") is True
+    assert "dots_tts" not in sys.modules
+
+
+@pytest.mark.unit
 def test_dots_fallback_overrides_incomplete_tn_module_temporarily(monkeypatch):
     unrelated_tn = types.ModuleType("tn")
     monkeypatch.setitem(sys.modules, "tn", unrelated_tn)

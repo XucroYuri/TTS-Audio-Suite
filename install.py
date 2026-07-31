@@ -20,6 +20,7 @@ import hashlib
 import json
 import shutil
 import tempfile
+from importlib.machinery import PathFinder
 from pathlib import Path
 from typing import List, Optional
 
@@ -506,7 +507,18 @@ class TTSAudioInstaller:
     def module_available(self, module_name: str) -> bool:
         """Check module presence without starting another Python process or importing it."""
         try:
-            return importlib.util.find_spec(module_name) is not None
+            search_path = None
+            name_parts = module_name.split(".")
+            for index in range(len(name_parts)):
+                module_prefix = ".".join(name_parts[: index + 1])
+                spec = PathFinder.find_spec(module_prefix, search_path)
+                if spec is None:
+                    return False
+                if index < len(name_parts) - 1:
+                    search_path = spec.submodule_search_locations
+                    if search_path is None:
+                        return False
+            return True
         except (ImportError, ModuleNotFoundError, AttributeError, ValueError):
             return False
 
