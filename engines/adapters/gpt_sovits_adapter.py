@@ -11,6 +11,7 @@ import numpy as np
 import torch
 
 from engines.gpt_sovits.runtime import GPTSovitsRuntimeContext, checkout_cwd, configure_gpt_sovits_source
+from engines.gpt_sovits.external_subprocess import ExternalGPTSovitsSubprocessProxy
 from utils.audio.cache import AudioCache, get_audio_cache
 from utils.device import resolve_torch_device
 from utils.text.character_parser import character_parser
@@ -73,13 +74,23 @@ class GPTSovitsAdapter:
         use_fp16: bool = True,
         character_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
         gpt_sovits_home: Optional[str] = None,
+        python_executable: Optional[str] = None,
         version: str = "v2",
     ) -> None:
-        context = configure_gpt_sovits_source(gpt_sovits_home)
-        if context is None:
+        if not gpt_sovits_home:
+            context = configure_gpt_sovits_source()
+            gpt_sovits_home = str(context.checkout_root) if context is not None else None
+        if not gpt_sovits_home:
             raise RuntimeError("gpt_sovits_home or GPT_SOVITS_PATH must point to an official GPT-SoVITS checkout")
         resolved_device = resolve_torch_device(device)
         normalized_fp16 = bool(use_fp16) and resolved_device != "cpu"
+        default_python = os.path.join(
+            gpt_sovits_home,
+            ".venv",
+            "Scripts" if os.name == "nt" else "bin",
+            "python.exe" if os.name == "nt" else "python",
+        )
+        requested_python = python_executable or default_python
 
         if character_profiles:
             self._character_profiles = dict(character_profiles)
@@ -91,36 +102,35 @@ class GPTSovitsAdapter:
             and self._device == resolved_device
             and self._use_fp16 == normalized_fp16
             and self._version == version
-            and self._runtime_context == context
+            and os.path.normcase(os.path.realpath(str(self.runtime.source_root)))
+            == os.path.normcase(os.path.realpath(gpt_sovits_home))
+            and os.path.normcase(os.path.realpath(str(self.runtime.python_executable)))
+            == os.path.normcase(os.path.realpath(requested_python))
         )
         if unchanged:
             return
 
         self.unload()
-        self._runtime_context = context
-        custom_config = {
-            "device": resolved_device,
-            "is_half": normalized_fp16,
-            "version": version,
-            "t2s_weights_path": gpt_weight,
-            "vits_weights_path": sovits_weight,
-            "bert_base_path": bert_path,
-            "cnhuhbert_base_path": cnhubert_path,
-        }
-        with checkout_cwd(context):
-            TTS_Config, TTS = self._import_official_runtime()
-            self.runtime_config = TTS_Config({"custom": custom_config})
-            config_path = context.package_root / "configs" / "tts_infer.yaml"
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            self.runtime_config.configs_path = str(config_path)
-            self._normalize_default_configs(self.runtime_config, context)
-        self.runtime = TTS(self.runtime_config)
+        self.runtime = ExternalGPTSovitsSubprocessProxy(
+            source_root=gpt_sovits_home,
+            gpt_weight=gpt_weight,
+            sovits_weight=sovits_weight,
+            bert_path=bert_path,
+            cnhubert_path=cnhubert_path,
+            python_executable=python_executable,
+            device=resolved_device,
+            use_fp16=normalized_fp16,
+            version=version,
+        )
         self._current_gpt_path = gpt_weight
         self._current_sovits_path = sovits_weight
         self._device = resolved_device
         self._use_fp16 = normalized_fp16
         self._version = version
         self.sample_rate = int(getattr(self.runtime_config, "sampling_rate", self.sample_rate))
+
+    def _audio_cache_enabled(self) -> bool:
+        return not bool(getattr(self.runtime, "source_root", None))
 
     def generate(
         self,
@@ -182,7 +192,8 @@ class GPTSovitsAdapter:
             how_to_cut=how_to_cut,
             seed=seed,
         )
-        cached = self.audio_cache.get_cached_audio(cache_key)
+        cache_enabled = self._audio_cache_enabled()
+        cached = self.audio_cache.get_cached_audio(cache_key) if cache_enabled else None
         if cached:
             return cached[0], self.sample_rate
 
@@ -208,7 +219,8 @@ class GPTSovitsAdapter:
             raise RuntimeError("Official GPT-SoVITS runtime returned inconsistent sample rates")
         waveform = torch.cat([self._as_waveform(audio) for _, audio in fragments], dim=-1)
         self.sample_rate = sample_rate
-        self.audio_cache.cache_audio(cache_key, waveform, waveform.shape[-1] / sample_rate)
+        if cache_enabled:
+            self.audio_cache.cache_audio(cache_key, waveform, waveform.shape[-1] / sample_rate)
         return waveform, sample_rate
 
     @staticmethod
@@ -229,10 +241,14 @@ class GPTSovitsAdapter:
                 continue
             profile = self._character_profiles.get(character or "", {})
             if "gpt_weight" in profile and "sovits_weight" in profile:
+                active_source_root = str(self.runtime.source_root)
+                active_python_executable = str(self.runtime.python_executable)
                 self.initialize_engine(
                     profile["gpt_weight"], profile["sovits_weight"],
                     profile.get("bert_path", ""), profile.get("cnhubert_path", ""),
                     self._device, self._use_fp16, version=profile.get("version", self._version),
+                    gpt_sovits_home=active_source_root,
+                    python_executable=active_python_executable,
                 )
             waveform, sample_rate = self._generate_single(
                 segment.strip(), text_lang, profile.get("ref_audio", ref_audio),
@@ -245,6 +261,8 @@ class GPTSovitsAdapter:
         return torch.cat(outputs, dim=-1), sample_rate
 
     def unload(self) -> None:
+        if self.runtime is not None and hasattr(self.runtime, "cleanup"):
+            self.runtime.cleanup()
         self.runtime = None
         self.runtime_config = None
         self._current_gpt_path = None

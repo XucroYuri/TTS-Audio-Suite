@@ -143,6 +143,16 @@ Back to the main narrator voice for the conclusion.""",
     _RUNTIME_OWNER = "text"
     _TARGET_RUNTIME_ENGINES = frozenset({"gpt_sovits", "index_tts", "cosyvoice"})
 
+    @classmethod
+    def IS_CHANGED(cls, TTS_engine, **_inputs):
+        """API Bridge requests are jobs, so each queued prompt must execute."""
+        if isinstance(TTS_engine, dict):
+            engine_type = TTS_engine.get("engine_type")
+            config = TTS_engine.get("config") or TTS_engine
+            if engine_type in cls._TARGET_RUNTIME_ENGINES and config.get("resource_id"):
+                return float("nan")
+        return False
+
     def __init__(self):
         super().__init__()
         self.chunker = ImprovedChatterBoxChunker()
@@ -253,7 +263,7 @@ Back to the main narrator voice for the conclusion.""",
                 stable_params['attention_mode'] = config.get('attention_mode', 'auto')
                 stable_params['quantize_llm_4bit'] = config.get('quantize_llm_4bit', False)
 
-            # For ChatterBox Official 23-Lang, include model_version in cache key since v1/v2 are different models
+            # ChatterBox multilingual T3 versions are distinct checkpoints.
             if engine_type == "chatterbox_official_23lang":
                 stable_params['model_version'] = config.get('model_version', 'v1')
 
@@ -288,6 +298,13 @@ Back to the main narrator voice for the conclusion.""",
                 stable_params['precision'] = config.get('precision', 'auto')
                 stable_params['optimize'] = config.get('optimize', False)
                 stable_params['max_generate_length'] = config.get('max_generate_length', 500)
+
+            if engine_type == "dramabox":
+                stable_params['model_name'] = config.get('model_name', 'DramaBox')
+                stable_params['precision'] = config.get('precision', 'auto')
+                stable_params['memory_mode'] = config.get('memory_mode', 'fast')
+                stable_params['transformer_quantization'] = config.get('transformer_quantization', 'none')
+                stable_params['compile_model'] = config.get('compile_model', False)
 
             if engine_type == "fish_audio_s2":
                 stable_params['model_variant'] = config.get('model_variant', 's2-pro')
@@ -325,6 +342,7 @@ Back to the main narrator voice for the conclusion.""",
                     cuda_kernel = None
                 stable_params['resource_id'] = config.get('resource_id')
                 stable_params['model_path'] = config.get('model_path')
+                stable_params['index_tts_home'] = config.get('index_tts_home')
                 stable_params['use_fp16'] = config.get('use_fp16', True)
                 stable_params['use_cuda_kernel'] = cuda_kernel
                 stable_params['use_deepspeed'] = config.get('use_deepspeed', False)
@@ -341,6 +359,7 @@ Back to the main narrator voice for the conclusion.""",
                 stable_params['gpt_sovits_home'] = config.get('gpt_sovits_home')
                 stable_params['version'] = config.get('version', 'v2')
                 stable_params['use_fp16'] = config.get('use_fp16', True)
+                stable_params['python_executable'] = config.get('python_executable')
 
             # For CosyVoice, include actual model identity and load options in cache key.
             # Both 0.5B variants share the same folder, so using only the resolved path or
@@ -693,6 +712,35 @@ Back to the main narrator voice for the conclusion.""",
 
                 return engine_instance
 
+            elif engine_type == "dramabox":
+                from engines.adapters.dramabox_adapter import DramaBoxEngineAdapter
+                processor_path = os.path.join(nodes_dir, "dramabox", "dramabox_processor.py")
+                processor_spec = importlib.util.spec_from_file_location(
+                    "dramabox_processor_module", processor_path
+                )
+                processor_module = importlib.util.module_from_spec(processor_spec)
+                processor_spec.loader.exec_module(processor_module)
+                DramaBoxProcessor = processor_module.DramaBoxProcessor
+
+                class DramaBoxWrapper:
+                    def __init__(self, cfg):
+                        self.config = cfg.copy()
+                        self.adapter = DramaBoxEngineAdapter(self.config)
+                        self.processor = DramaBoxProcessor(self.adapter, self.config)
+
+                    def update_config(self, new_config):
+                        self.config = new_config.copy()
+                        self.adapter.update_config(new_config)
+                        self.processor.update_config(new_config)
+
+                engine_instance = DramaBoxWrapper(config)
+                import time
+                self._cached_engine_instances[cache_key] = {
+                    'instance': engine_instance,
+                    'timestamp': time.time()
+                }
+                return engine_instance
+
             elif engine_type == "fish_audio_s2":
                 from engines.adapters.fish_audio_s2_adapter import FishAudioS2Adapter
                 processor_path = os.path.join(nodes_dir, "fish_audio_s2", "fish_audio_s2_processor.py")
@@ -933,6 +981,10 @@ Back to the main narrator voice for the conclusion.""",
                 raise
             if "MOSS LoRA/base model mismatch" in str(e):
                 raise
+            if engine_type == "gpt_sovits":
+                failed_config = engine_data.get("config") or engine_data
+                if failed_config.get("resource_id"):
+                    raise
             print(f"❌ Failed to create engine node instance: {e}")
             return None
 
@@ -1082,6 +1134,7 @@ Back to the main narrator voice for the conclusion.""",
             Tuple of (audio_tensor, generation_info)
         """
         engine_type = None
+        config = {}
         try:
             # Apply Python 3.12 CUDNN compatibility fix before TTS generation
             from utils.comfyui_compatibility import ensure_python312_cudnn_fix
@@ -1642,6 +1695,69 @@ Back to the main narrator voice for the conclusion.""",
                 formatted_audio = AudioProcessingUtils.format_for_comfyui(combined_audio, 48000)
                 result = (formatted_audio, generation_info)
 
+            elif engine_type == "dramabox":
+                import re
+                from utils.audio.chunk_timing import ChunkTimingHelper
+
+                voice_mapping = {}
+                if audio_tensor is not None or audio_path:
+                    voice_mapping['narrator'] = {
+                        'audio': audio_tensor,
+                        'audio_path': audio_path,
+                        'reference_text': reference_text or '',
+                    }
+
+                segment_records = engine_instance.processor.process_text(
+                    text=text,
+                    voice_mapping=voice_mapping,
+                    seed=seed,
+                    enable_chunking=enable_chunking,
+                    max_chars_per_chunk=max_chars_per_chunk,
+                    chunk_combination_method=chunk_combination_method,
+                    silence_between_chunks_ms=silence_between_chunks_ms,
+                    enable_audio_cache=enable_audio_cache,
+                )
+                combined_audio, chunk_info = engine_instance.processor.combine_audio_segments(
+                    segments=segment_records,
+                    method=chunk_combination_method,
+                    silence_ms=silence_between_chunks_ms,
+                    original_text=text,
+                    return_info=True,
+                )
+
+                total_duration = combined_audio.shape[-1] / 48000.0 if combined_audio.numel() else 0.0
+                clean_text = re.sub(r'\[.*?\]', '', text)
+                base_info = (
+                    f"Generated {total_duration:.1f}s audio from {len(clean_text)} characters "
+                    f"(DramaBox, narrator: {char_display})"
+                )
+                base_info += "\n🎭 Native expressive prompts, character switching, and pause tags enabled"
+                near_silent_records = [
+                    record
+                    for record in segment_records
+                    if record.get("generation_status", {}).get("near_silent")
+                ]
+                if near_silent_records:
+                    base_info += (
+                        f"\n\n⚠️ DramaBox detected {len(near_silent_records)} "
+                        "near-silent generated segment(s)."
+                    )
+                    for record in near_silent_records:
+                        status = record["generation_status"]
+                        base_info += (
+                            f"\n⚠️ {status.get('character', record.get('character', 'narrator'))}: "
+                            "adjust generation/reference duration, reference audio, "
+                            "guidance settings, or seed for that segment "
+                            f"(RMS {status.get('rms_dbfs', -120.0):.1f} dBFS)."
+                        )
+                generation_info = ChunkTimingHelper.enhance_generation_info(
+                    f"✅ {base_info}", chunk_info
+                )
+                formatted_audio = AudioProcessingUtils.format_for_comfyui(
+                    combined_audio, 48000
+                )
+                result = (formatted_audio, generation_info)
+
             elif engine_type == "fish_audio_s2":
                 import re
                 from utils.audio.chunk_timing import ChunkTimingHelper
@@ -2143,6 +2259,8 @@ Back to the main narrator voice for the conclusion.""",
             if "MOSS LoRA/base model mismatch" in str(e):
                 raise
             if engine_type == "index_tts":
+                raise
+            if engine_type == "gpt_sovits" and config.get("resource_id"):
                 raise
             if isinstance(e, InterruptedError):
                 raise

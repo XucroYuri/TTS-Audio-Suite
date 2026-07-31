@@ -65,7 +65,7 @@ export function buildHistorySection(state, storageKey) {
     return { historySection, undoBtn, redoBtn, historyStatus };
 }
 
-export function buildCharacterSection(state, storageKey) {
+export function buildCharacterSection(state, storageKey, onManageAliases) {
     const charSection = document.createElement("div");
     charSection.style.marginBottom = "8px";
     charSection.style.paddingBottom = "8px";
@@ -76,6 +76,28 @@ export function buildCharacterSection(state, storageKey) {
     charLabel.style.fontWeight = "bold";
     charLabel.style.marginBottom = "5px";
     charLabel.style.fontSize = "11px";
+    charLabel.style.cursor = "pointer";
+    charLabel.style.outline = "none";
+    charLabel.style.transition = "color 120ms ease";
+    charLabel.tabIndex = 0;
+    charLabel.setAttribute("role", "button");
+    charLabel.setAttribute("aria-label", "Manage character aliases");
+    charLabel.title = "Manage character aliases";
+    const setLabelActive = active => {
+        charLabel.style.color = active ? "#38bdf8" : "";
+    };
+    charLabel.addEventListener("mouseenter", () => setLabelActive(true));
+    charLabel.addEventListener("mouseleave", () => {
+        if (document.activeElement !== charLabel) setLabelActive(false);
+    });
+    charLabel.addEventListener("focus", () => setLabelActive(true));
+    charLabel.addEventListener("blur", () => setLabelActive(false));
+    charLabel.addEventListener("click", () => onManageAliases?.());
+    charLabel.addEventListener("keydown", event => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onManageAliases?.();
+    });
 
     const charSelect = document.createElement("select");
     charSelect.style.width = "100%";
@@ -87,10 +109,11 @@ export function buildCharacterSection(state, storageKey) {
     charSelect.style.border = "1px solid #444";
     charSelect.innerHTML = "<option value=''>Select...</option>";
 
-    const populateCharacters = async () => {
+    const populateCharacters = async (forceApi = false) => {
         try {
+            const previousValue = charSelect.value;
             let characters = [];
-            if (state.discoveredCharacters && typeof state.discoveredCharacters === 'object') {
+            if (!forceApi && state.discoveredCharacters && typeof state.discoveredCharacters === 'object') {
                 if (!Array.isArray(state.discoveredCharacters)) {
                     characters = Object.keys(state.discoveredCharacters);
                 } else {
@@ -114,12 +137,14 @@ export function buildCharacterSection(state, storageKey) {
                 characters = ["Alice", "Bob", "Charlie", "Diana", "Emma", "Frank", "Grace", "Henry"];
             }
 
+            charSelect.innerHTML = "<option value=''>Select...</option>";
             characters.forEach(char => {
                 const option = document.createElement("option");
                 option.value = char;
                 option.textContent = char;
                 charSelect.appendChild(option);
             });
+            if (characters.includes(previousValue)) charSelect.value = previousValue;
             console.log(`✅ Loaded ${characters.length} character voices`);
         } catch (err) {
             console.warn("Could not populate characters:", err);
@@ -162,7 +187,13 @@ export function buildCharacterSection(state, storageKey) {
     charSection.appendChild(charInput);
     charSection.appendChild(addCharBtn);
 
-    return { charSection, charSelect, charInput, addCharBtn };
+    return {
+        charSection,
+        charSelect,
+        charInput,
+        addCharBtn,
+        refreshCharacters: () => populateCharacters(true),
+    };
 }
 
 export function buildLanguageSection(state, storageKey) {

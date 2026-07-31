@@ -57,12 +57,20 @@ class F5TTSModelManager:
         """
         model_paths = []
         
-        # Search paths in order of priority: TTS first, then legacy
-        search_paths = [
-            os.path.join(folder_paths.models_dir, "TTS", "F5-TTS"),
-            os.path.join(folder_paths.models_dir, "F5-TTS"),  # Legacy
-            os.path.join(folder_paths.models_dir, "Checkpoints", "F5-TTS")  # Legacy
-        ]
+        # Search paths in order of priority:
+        # 1. Every registered TTS root (includes extras from extra_model_paths.yaml)
+        # 2. Legacy directories under the primary models folder
+        import folder_paths
+        from utils.models.tts_paths import get_tts_root_dirs
+
+        search_paths = [os.path.join(r, "F5-TTS") for r in get_tts_root_dirs()]
+        # Legacy fallbacks (these pre-date the TTS category, keep for backward compat)
+        for legacy in [
+            os.path.join(folder_paths.models_dir, "F5-TTS"),
+            os.path.join(folder_paths.models_dir, "Checkpoints", "F5-TTS"),
+        ]:
+            if legacy not in search_paths:
+                search_paths.append(legacy)
         
         # 1-2. Check ComfyUI models folders
         for search_path in search_paths:
@@ -153,11 +161,15 @@ class F5TTSModelManager:
         
         # Check if this model should be available locally
         local_model_expected = False
-        f5tts_search_paths = [
-            os.path.join(folder_paths.models_dir, "TTS", "F5-TTS"),
-            os.path.join(folder_paths.models_dir, "F5-TTS"),  # Legacy
-            os.path.join(folder_paths.models_dir, "Checkpoints", "F5-TTS")  # Legacy
-        ]
+        from utils.models.tts_paths import get_tts_root_dirs
+        f5tts_search_paths = [os.path.join(r, "F5-TTS") for r in get_tts_root_dirs()]
+        # Legacy fallbacks
+        for legacy in [
+            os.path.join(folder_paths.models_dir, "F5-TTS"),
+            os.path.join(folder_paths.models_dir, "Checkpoints", "F5-TTS"),
+        ]:
+            if legacy not in f5tts_search_paths:
+                f5tts_search_paths.append(legacy)
         
         for f5tts_path in f5tts_search_paths:
             if os.path.exists(f5tts_path):

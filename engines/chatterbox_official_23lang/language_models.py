@@ -46,6 +46,7 @@ OFFICIAL_23LANG_MODELS = {
                 "s3gen.pt",               # S3Gen model (same as English)
                 "ve.pt",                  # Voice encoder (same as English)
                 "mtl_tokenizer.json",     # Multilingual tokenizer
+                "Cangjie5_TC.json",       # Chinese Cangjie mapping
                 "conds.pt"                # Conditioning (optional)
             ],
             "v2": [
@@ -54,7 +55,17 @@ OFFICIAL_23LANG_MODELS = {
                 "ve.pt",                           # Voice encoder (same as English)
                 "grapheme_mtl_merged_expanded_v1.json",  # Enhanced grapheme/phoneme mappings with special tokens
                 "mtl_tokenizer.json",              # Multilingual tokenizer (may be updated for v2)
+                "Cangjie5_TC.json",                 # Chinese Cangjie mapping
                 "conds.pt"                         # Conditioning (optional)
+            ],
+            "v3": [
+                "t3_mtl23ls_v3.safetensors",      # Latest official multilingual T3 model
+                "s3gen.pt",                        # Official V3 API continues to use shared S3Gen
+                "ve.pt",                           # Shared voice encoder
+                "grapheme_mtl_merged_expanded_v1.json",
+                "mtl_tokenizer.json",
+                "Cangjie5_TC.json",
+                "conds.pt"
             ]
         },
         "multilingual": True

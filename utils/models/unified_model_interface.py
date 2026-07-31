@@ -147,7 +147,9 @@ class UnifiedModelInterface:
         # CRITICAL: For engines that support multiple model variants (like Qwen3-TTS),
         # check if a DIFFERENT variant is already loaded and unload it to prevent device conflicts
         # Only applies to engines where model variants are mutually exclusive
-        if config.engine_name in ("qwen3_tts", "moss_tts", "higgs_audio_v3"):
+        if config.engine_name in (
+            "qwen3_tts", "moss_tts", "higgs_audio_v3", "dramabox"
+        ):
             # Check for any cached mutually-exclusive model variant for this engine
             cached_prefix = f"{config.engine_name}_tts_"
             cached_keys = [k for k in tts_model_manager._model_cache.keys() if k.startswith(cached_prefix)]
@@ -1770,6 +1772,37 @@ def register_dots_tts_factory():
     unified_model_interface.register_model_factory("dots_tts", "tts", dots_tts_factory)
 
 
+def register_dramabox_factory():
+    """Register official DramaBox in the main Transformers 5 environment."""
+    def dramabox_factory(config: ModelLoadConfig):
+        from engines.dramabox.dramabox_downloader import DramaBoxDownloader
+        from engines.dramabox.dramabox_engine import DramaBoxEngine
+
+        model_name = config.model_name or DramaBoxDownloader.MODEL_NAME
+        device = config.device or "auto"
+        additional_params = config.additional_params or {}
+        precision = additional_params.get("precision", "auto")
+        model_paths = DramaBoxDownloader().resolve_model_path(model_name)
+
+        print(f"🔄 Loading DramaBox via unified interface: {model_name}")
+        engine = DramaBoxEngine(
+            model_name=model_name,
+            device=device,
+            precision=precision,
+            model_paths=model_paths,
+            memory_mode=additional_params.get("memory_mode", "fast"),
+            transformer_quantization=additional_params.get(
+                "transformer_quantization", "none"
+            ),
+            compile_model=bool(additional_params.get("compile_model", False)),
+        )
+        engine._ensure_runtime_loaded()
+        print(f"✅ DramaBox model '{model_name}' loaded successfully")
+        return engine
+
+    unified_model_interface.register_model_factory("dramabox", "tts", dramabox_factory)
+
+
 def register_omnivoice_factory():
     """Register OmniVoice model factory."""
 
@@ -2007,6 +2040,7 @@ def initialize_all_factories():
     register_qwen3_tts_factory()
     register_fish_audio_s2_factory()
     register_dots_tts_factory()
+    register_dramabox_factory()
     register_omnivoice_factory()
     register_qwen3_asr_factory()
     register_qwen3_aligner_factory()

@@ -59,7 +59,7 @@ function createNumberInput(labelText) {
     return { wrapper, input };
 }
 
-export function createCharacterVoiceTrimUI(onRangeChange) {
+export function createCharacterVoiceTrimUI(onRangeChange, onManageAliases) {
     const root = document.createElement("div");
     Object.assign(root.style, {
         position: "relative",
@@ -83,6 +83,32 @@ export function createCharacterVoiceTrimUI(onRangeChange) {
         alignItems: "center",
         gap: "8px",
         minWidth: "0",
+        padding: "3px 4px",
+        margin: "-3px -4px",
+        borderRadius: "4px",
+        outline: "none",
+        cursor: "pointer",
+        transition: "background 120ms ease, box-shadow 120ms ease",
+    });
+    header.tabIndex = 0;
+    header.setAttribute("role", "button");
+    header.setAttribute("aria-label", "Manage character aliases");
+    header.title = "Manage character aliases";
+    const setHeaderHighlight = (active) => {
+        header.style.background = active ? "rgba(56, 189, 248, 0.08)" : "transparent";
+        header.style.boxShadow = active ? "inset 0 0 0 1px rgba(56, 189, 248, 0.22)" : "none";
+    };
+    header.addEventListener("mouseenter", () => setHeaderHighlight(true));
+    header.addEventListener("mouseleave", () => {
+        if (document.activeElement !== header) setHeaderHighlight(false);
+    });
+    header.addEventListener("focus", () => setHeaderHighlight(true));
+    header.addEventListener("blur", () => setHeaderHighlight(false));
+    header.addEventListener("click", () => onManageAliases?.());
+    header.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onManageAliases?.();
     });
     const title = document.createElement("span");
     Object.assign(title.style, {

@@ -11,7 +11,7 @@ except ImportError:
     pass
 
 # Version and constants
-VERSION = "5.5.2"
+VERSION = "5.6.2"
 IS_DEV = False  # Set to False for release builds
 VERSION_DISPLAY = f"v{VERSION}" + (" (dev)" if IS_DEV else "")
 SEPARATOR = "=" * 70
@@ -34,6 +34,17 @@ import importlib.util
 current_dir = os.path.dirname(__file__)
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
+
+TARGETS_INSTALL_PROFILE = "tts_more_targets"
+targets_profile_enabled = (
+    os.environ.get("TTS_AUDIO_SUITE_INSTALL_PROFILE", "").strip().lower()
+    == TARGETS_INSTALL_PROFILE
+)
+TARGETS_PROFILE_NODE_FILES = {
+    "api_bridge/resource_engine_nodes.py",
+    "api_bridge/audio_asset_node.py",
+    "unified/tts_text_node.py",
+}
 
 # Transformers version check deferred to first engine use to avoid
 # importing transformers (~1.3s) at plugin load time.
@@ -72,6 +83,10 @@ def _check_transformers_version():
 # Import nodes using direct file loading to avoid package path issues
 def load_node_module(module_name, file_name):
     """Load a node module from the nodes directory"""
+    if targets_profile_enabled and file_name not in TARGETS_PROFILE_NODE_FILES:
+        raise ImportError(
+            f"{file_name} is disabled by the {TARGETS_INSTALL_PROFILE} install profile"
+        )
     module_path = os.path.join(current_dir, "nodes", file_name)
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     module = importlib.util.module_from_spec(spec)
@@ -186,6 +201,14 @@ try:
 except Exception as e:
     print(f"❌ Dots TTS Engine failed: {e}")
     DOTS_TTS_ENGINE_AVAILABLE = False
+
+try:
+    dramabox_engine_module = load_node_module("dramabox_engine_node", "engines/dramabox_engine_node.py")
+    DramaBoxEngineNode = dramabox_engine_module.DramaBoxEngineNode
+    DRAMABOX_ENGINE_AVAILABLE = True
+except Exception as e:
+    print(f"❌ DramaBox Engine failed: {e}")
+    DRAMABOX_ENGINE_AVAILABLE = False
 
 try:
     fish_audio_s2_engine_module = load_node_module("fish_audio_s2_engine_node", "engines/fish_audio_s2_engine_node.py")
@@ -691,6 +714,10 @@ if ECHO_TTS_ENGINE_AVAILABLE:
 if DOTS_TTS_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["DotsTTSEngineNode"] = DotsTTSEngineNode
     NODE_DISPLAY_NAME_MAPPINGS["DotsTTSEngineNode"] = "⚙️ Dots TTS Engine"
+
+if DRAMABOX_ENGINE_AVAILABLE:
+    NODE_CLASS_MAPPINGS["DramaBoxEngineNode"] = DramaBoxEngineNode
+    NODE_DISPLAY_NAME_MAPPINGS["DramaBoxEngineNode"] = "⚙️ DramaBox Engine"
 
 if FISH_AUDIO_S2_ENGINE_AVAILABLE:
     NODE_CLASS_MAPPINGS["FishAudioS2EngineNode"] = FishAudioS2EngineNode

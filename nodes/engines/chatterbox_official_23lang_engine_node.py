@@ -146,9 +146,9 @@ class ChatterBoxOfficial23LangEngineNode(BaseTTSNode):
 
         return {
             "required": {
-                "model_version": (["v1", "v2", "Vietnamese (Viterbox)", "Egyptian Arabic (oddadmix)"], {
-                    "default": "v2",
-                    "tooltip": "ChatterBox model version:\n• v1: Original 23-language model\n• v2: Enhanced with special tokens for emotions ([giggle], [laughter], [sigh]), sounds ([cough], [sneeze]), vocal styles ([singing], [whisper]), and improved Russian support\n• Vietnamese (Viterbox): Community finetune optimized for Vietnamese (3000+ hours training data), supports all 24 languages with Vietnamese language support\n• Egyptian Arabic (oddadmix): Community finetune optimized for Egyptian Arabic (requires 'Arabic' language selection)"
+                "model_version": (["v3", "v2", "v1", "Vietnamese (Viterbox)", "Egyptian Arabic (oddadmix)"], {
+                    "default": "v3",
+                    "tooltip": "ChatterBox model version:\n• v3: Latest opt-in official multilingual checkpoint; skips the legacy alignment analyzer and trims the final token artifact\n• v2: Upstream default multilingual checkpoint with the suite's v2 special-token support\n• v1: Original 23-language model\n• Vietnamese (Viterbox): Community finetune optimized for Vietnamese\n• Egyptian Arabic (oddadmix): Community finetune optimized for Egyptian Arabic (requires 'Arabic' language selection)"
                 }),
                 "language": (available_languages, {
                     "default": "English",
@@ -159,11 +159,11 @@ class ChatterBoxOfficial23LangEngineNode(BaseTTSNode):
                     "tooltip": "Device to run ChatterBox model on:\n• auto: Automatically select best available (MPS on Apple Silicon, CUDA on NVIDIA, XPU on Intel, CPU fallback)\n• cuda: NVIDIA GPU (requires CUDA-capable GPU)\n• xpu: Intel GPU (requires Intel PyTorch XPU)\n• cpu: CPU-only processing (slower)\n• mps: Apple Metal Performance Shaders (Apple Silicon Macs only)"
                 }),
                 "exaggeration": ("FLOAT", {
-                    "default": 1.0,
+                    "default": 0.5,
                     "min": 0.0,
                     "max": 5.0,
                     "step": 0.1,
-                    "tooltip": "Emotion exaggeration control. WARNING: This parameter has minimal effect in the multilingual models (v1 and v2) due to model training issues. Values are internally scaled by 50000x. Even at extreme values (100000+), changes are barely noticeable. This appears to be a fundamental model limitation, not an implementation issue. Classic ChatterBox works as expected."
+                    "tooltip": "Emotion exaggeration value passed to the model. V3 uses the native value directly, but current V3 weights show little or no audible response. Legacy v1/v2 keep the suite's historical scaling workaround."
                 }),
                 "temperature": ("FLOAT", {
                     "default": 0.8, 
@@ -180,7 +180,7 @@ class ChatterBoxOfficial23LangEngineNode(BaseTTSNode):
                     "tooltip": "Classifier-Free Guidance weight for ChatterBox. Controls how strongly the model follows the text prompt."
                 }),
                 "repetition_penalty": ("FLOAT", {
-                    "default": 2.0,
+                    "default": 1.2,
                     "min": 1.0,
                     "max": 5.0,
                     "step": 0.1,
@@ -215,7 +215,7 @@ class ChatterBoxOfficial23LangEngineNode(BaseTTSNode):
         Create ChatterBox Official 23-Lang engine adapter with configuration.
 
         Args:
-            model_version: Model version (v1 or v2)
+            model_version: Model version (v1, v2, v3, or community variant)
             language: Language for multilingual generation
             device: Device to run model on
             exaggeration: Speech exaggeration level
@@ -246,9 +246,11 @@ class ChatterBoxOfficial23LangEngineNode(BaseTTSNode):
             # Import the adapter class
             from engines.adapters.chatterbox_official_23lang_adapter import ChatterBoxOfficial23LangEngineAdapter
 
-            # Scale exaggeration by 50000x for multilingual models due to training issues
-            # Multilingual models have extremely small emotion_adv_fc weights requiring massive values
-            scaled_exaggeration = exaggeration * 50000.0
+            # V1/V2 preserve the suite's historical workaround. Official V3
+            # expects the native public API value directly.
+            scaled_exaggeration = (
+                exaggeration if model_version == "v3" else exaggeration * 50000.0
+            )
 
             # Create configuration dictionary
             config = {
@@ -288,6 +290,7 @@ class ChatterBoxOfficial23LangEngineNode(BaseTTSNode):
                 "engine_type": "chatterbox_official_23lang",
                 "config": {
                     "language": language,
+                    "model_version": model_version,
                     "device": "cpu",  # Fallback to CPU
                     "exaggeration": 0.5,
                     "temperature": 0.8,

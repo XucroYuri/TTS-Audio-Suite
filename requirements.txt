@@ -41,12 +41,16 @@ lingua-language-detector
 accelerate
 datasets
 requests
+psutil>=5.9.0           # Bounded descendant-tree cleanup for isolated external runtimes
 dacite
 bitsandbytes>=0.47.0     # 4-bit quantization support for VibeVoice memory efficiency
 safetensors>=0.6.2       # MOSS-TTS / HF safetensors checkpoints
 orjson>=3.11.0           # MOSS-TTS remote-code dependency
 tiktoken>=0.12.0         # MOSS-TTS tokenizer dependency
 peft>=0.18.1            # MOSS-TTS LoRA adapter inference/training support (aLoRA/Arrow-era adapter configs)
+av>=12.0.0              # DramaBox official audio reference decoding
+einops>=0.7.0           # DramaBox LTX tensor rearrangement
+PyYAML>=6.0             # DramaBox/LTX configuration support
 
 # Bundled engine dependencies (safe)
 conformer>=0.3.2      # ChatterBox engine

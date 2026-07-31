@@ -2,7 +2,6 @@ import os
 import sys
 import torch
 import torchaudio
-import tempfile
 import folder_paths
 import numpy as np
 from typing import Optional, Union, List, Dict, Any
@@ -11,6 +10,7 @@ import warnings
 from utils.models.unified_model_interface import unified_model_interface
 from utils.models.factory_config import ModelLoadConfig
 from utils.models.extra_paths import find_model_in_paths, get_preferred_download_path, get_all_tts_model_paths
+from engines.index_tts.external_subprocess import ExternalIndexTTSSubprocessProxy
 
 
 class IndexTTSEngine:
@@ -27,10 +27,12 @@ class IndexTTSEngine:
     
     EMOTION_LABELS = ["happy", "angry", "sad", "afraid", "disgusted", "melancholic", "surprised", "calm"]
     
-    def __init__(self, model_dir: str = "IndexTTS-2", device: str = "auto",
+    def __init__(self, model_dir: str = "IndexTTS-2", source_root: Optional[str] = None,
+                 device: str = "auto",
                  use_fp16: bool = True, use_cuda_kernel: Optional[bool] = None,
                  use_deepspeed: bool = False, use_torch_compile: bool = False,
-                 use_accel: bool = False, low_vram: bool = False):
+                 use_accel: bool = False, low_vram: bool = False,
+                 subprocess_timeout_seconds: float = 900.0):
         """
         Initialize IndexTTS-2 engine.
 
@@ -46,6 +48,7 @@ class IndexTTSEngine:
         """
         # Resolve model directory using extra_model_paths
         self.model_dir = self._find_model_directory(model_dir)
+        self.source_root = os.path.abspath(source_root) if source_root else None
 
         self.device = self._resolve_device(device)
         self.use_fp16 = use_fp16 and self.device != "cpu"
@@ -54,6 +57,7 @@ class IndexTTSEngine:
         self.use_torch_compile = use_torch_compile
         self.use_accel = use_accel
         self.low_vram = low_vram
+        self.subprocess_timeout_seconds = subprocess_timeout_seconds
 
         self._tts_engine = None
         self._model_config = None
@@ -131,6 +135,24 @@ class IndexTTSEngine:
     def _ensure_model_loaded(self):
         """Load the IndexTTS-2 model using unified model interface."""
         if self._tts_engine is not None:
+            return
+
+        if self.source_root:
+            if self.low_vram:
+                raise RuntimeError("low_vram is not supported by the official IndexTTS subprocess runtime")
+            self._tts_engine = ExternalIndexTTSSubprocessProxy(
+                source_root=self.source_root,
+                model_dir=self.model_dir,
+                device=self.device,
+                use_fp16=self.use_fp16,
+                use_cuda_kernel=self.use_cuda_kernel,
+                use_deepspeed=self.use_deepspeed,
+                use_torch_compile=self.use_torch_compile,
+                use_accel=self.use_accel,
+                timeout_seconds=self.subprocess_timeout_seconds,
+                temp_root=folder_paths.get_temp_directory(),
+            )
+            print(f"✅ IndexTTS-2 official subprocess runtime ready on {self.device}")
             return
             
         # Create model configuration
@@ -316,11 +338,6 @@ class IndexTTSEngine:
             # Normalize to valid range
             emotion_vector = [max(0.0, min(1.2, v)) for v in emotion_vector]
         
-        # Create temporary output file in ComfyUI temp directory
-        comfyui_temp_dir = folder_paths.get_temp_directory()
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False, dir=comfyui_temp_dir) as tmp_file:
-            output_path = tmp_file.name
-            
         try:
             # Filter out unsupported kwargs (e.g., speech_speed from external nodes)
             supported_kwargs = {}
@@ -466,5 +483,9 @@ class IndexTTSEngine:
         """Unload the model to free memory."""
         if self._model_config:
             unified_model_interface.unload_model(self._model_config)
+        elif self._tts_engine is not None:
+            cleanup = getattr(self._tts_engine, "cleanup", None) or getattr(self._tts_engine, "close", None)
+            if callable(cleanup):
+                cleanup()
         self._tts_engine = None
         self._model_config = None

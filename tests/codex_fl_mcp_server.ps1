@@ -44,5 +44,21 @@ $env:FL_MCP_MODE = "subprocess"
 $env:FL_MCP_SESSION_ID = $Matches[1]
 $env:FL_MCP_WS_URL = "ws://127.0.0.1:8000/ws"
 
-& $flPython $mcpServer
-exit $LASTEXITCODE
+# Keep the stdio transport owned by this wrapper alive across unexpected MCP
+# subprocess exits. Codex can continue using the same task while the child
+# reconnects to the bridge.
+$restartDelaySeconds = 1
+while ($true) {
+    & $flPython $mcpServer
+    $mcpExitCode = $LASTEXITCODE
+
+    if ($mcpExitCode -eq 0) {
+        exit 0
+    }
+
+    [Console]::Error.WriteLine(
+        "FL-MCP stdio server exited with code $mcpExitCode; restarting in $restartDelaySeconds second(s)."
+    )
+    Start-Sleep -Seconds $restartDelaySeconds
+    $restartDelaySeconds = [Math]::Min($restartDelaySeconds * 2, 10)
+}

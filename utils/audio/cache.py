@@ -577,6 +577,34 @@ class DotsTTSCacheKeyGenerator(CacheKeyGenerator):
         return hashlib.md5(cache_string.encode()).hexdigest()
 
 
+class DramaBoxCacheKeyGenerator(CacheKeyGenerator):
+    """Cache key generator for official DramaBox inference."""
+
+    def generate_cache_key(self, **params) -> str:
+        cache_data = {
+            'text': params.get('text', ''),
+            'audio_component': params.get('audio_component', ''),
+            'model_name': params.get('model_name', 'DramaBox'),
+            'cfg_scale': round(float(params.get('cfg_scale', 2.5)), 3),
+            'stg_scale': round(float(params.get('stg_scale', 1.5)), 3),
+            'duration_multiplier': round(float(params.get('duration_multiplier', 1.1)), 3),
+            'gen_duration': round(float(params.get('gen_duration', 0.0)), 3),
+            'ref_duration': round(float(params.get('ref_duration', 10.0)), 3),
+            'rescale_scale': params.get('rescale_scale', 'auto'),
+            'watermark': bool(params.get('watermark', False)),
+            'prompt_template': params.get('prompt_template', '"{seg}"'),
+            'negative_prompt': params.get('negative_prompt', ''),
+            'precision': params.get('precision', 'auto'),
+            'transformer_quantization': params.get('transformer_quantization', 'none'),
+            'memory_mode': params.get('memory_mode', 'fast'),
+            'compile_model': bool(params.get('compile_model', False)),
+            'seed': params.get('seed', 42),
+            'character': params.get('character', 'narrator'),
+            'engine': 'dramabox',
+        }
+        return hashlib.md5(str(sorted(cache_data.items())).encode()).hexdigest()
+
+
 class FishAudioS2CacheKeyGenerator(CacheKeyGenerator):
     """Cache key generator for Fish Audio S2 Pro."""
 
@@ -705,6 +733,7 @@ class AudioCache:
             'cosyvoice': CosyVoiceCacheKeyGenerator(),
             'qwen3_tts': Qwen3TTSCacheKeyGenerator(),
             'dots_tts': DotsTTSCacheKeyGenerator(),
+            'dramabox': DramaBoxCacheKeyGenerator(),
             'fish_audio_s2': FishAudioS2CacheKeyGenerator(),
             'omnivoice': OmniVoiceCacheKeyGenerator(),
             'moss_tts': MossTTSCacheKeyGenerator(),
@@ -781,7 +810,7 @@ class AudioCache:
             num_samples = audio_tensor.numel()
 
         # Use engine-specific sample rates
-        if engine_type in ('dots_tts', 'moss_soundeffect_v2'):
+        if engine_type in ('dots_tts', 'dramabox', 'moss_soundeffect_v2'):
             sample_rate = 48000
         elif engine_type in ('f5tts', 'step_audio_editx', 'qwen3_tts', 'moss_tts', 'higgs_audio_v3', 'omnivoice'):
             sample_rate = 24000

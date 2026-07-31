@@ -33,6 +33,7 @@ import comfy.model_management as model_management
 from utils.models.unified_model_interface import unified_model_interface
 from utils.models.factory_config import ModelLoadConfig
 from utils.models.extra_paths import find_model_in_paths, get_preferred_download_path, get_all_tts_model_paths
+from engines.cosyvoice.external_subprocess import ExternalCosyVoiceSubprocessProxy
 
 
 class CosyVoiceEngine:
@@ -67,7 +68,7 @@ class CosyVoiceEngine:
         if model_management.interrupt_processing:
             raise InterruptedError("CosyVoice3 generation interrupted by user")
     
-    def __init__(self, model_dir: str = "Fun-CosyVoice3-0.5B-RL", device: str = "auto",
+    def __init__(self, model_dir: str = "Fun-CosyVoice3-0.5B-RL", source_root: Optional[str] = None, device: str = "auto",
                  use_fp16: bool = False, load_trt: bool = False, load_vllm: bool = False):
         """
         Initialize CosyVoice3 engine.
@@ -81,9 +82,10 @@ class CosyVoiceEngine:
         """
         # Store original model_identifier to know which variant was requested
         self.model_identifier = model_dir
+        self.source_root = os.path.abspath(source_root) if source_root else None
 
         # Resolve model directory using extra_model_paths
-        self.model_dir = self._find_model_directory(model_dir)
+        self.model_dir = os.path.abspath(model_dir) if self.source_root else self._find_model_directory(model_dir)
 
         self.device = self._resolve_device(device)
         self.use_fp16 = use_fp16 and self.device != "cpu"
@@ -173,6 +175,19 @@ class CosyVoiceEngine:
     def _ensure_model_loaded(self):
         """Load the CosyVoice3 model using unified model interface."""
         if self._cosyvoice is not None:
+            return
+
+        if self.source_root:
+            self._cosyvoice = ExternalCosyVoiceSubprocessProxy(
+                source_root=self.source_root,
+                model_dir=self.model_dir,
+                device=self.device,
+                use_fp16=self.use_fp16,
+                load_trt=self.load_trt,
+                load_vllm=self.load_vllm,
+                temp_root=folder_paths.get_temp_directory(),
+            )
+            print(f"✅ CosyVoice official subprocess runtime ready on {self.device}")
             return
 
         # Determine which LLM file to use based on model variant

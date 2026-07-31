@@ -57,7 +57,7 @@ class ExternalGPTSovitsEngineNode:
         temperature: float = 1.0,
     ):
         resource = get_resource_registry().require(resource_id, "gpt_sovits")
-        return _engine_data("gpt_sovits", "GPTSovitsAdapter", resource_id, {
+        config = {
             "gpt_weight": str(resource.gpt_weight),
             "sovits_weight": str(resource.sovits_weight),
             "bert_path": str(resource.bert_path or ""),
@@ -73,7 +73,10 @@ class ExternalGPTSovitsEngineNode:
             "top_k": top_k,
             "top_p": top_p,
             "temperature": temperature,
-        })
+        }
+        if resource.python_executable is not None:
+            config["python_executable"] = str(resource.python_executable)
+        return _engine_data("gpt_sovits", "GPTSovitsAdapter", resource_id, config)
 
 
 class ExternalIndexTTSEngineNode:
