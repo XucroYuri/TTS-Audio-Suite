@@ -61,6 +61,7 @@ class CosyVoiceProcessor:
         
         # Extract configuration
         self.model_path = engine_config.get('model_path', 'Fun-CosyVoice3-0.5B')
+        self.cosyvoice_home = engine_config.get('cosyvoice_home')
         self.device = engine_config.get('device', 'auto')
         self.mode = engine_config.get('mode', 'zero_shot')
         self.speed = engine_config.get('speed', 1.0)
@@ -74,6 +75,7 @@ class CosyVoiceProcessor:
         self.adapter = CosyVoiceAdapter()
         self.adapter.initialize_engine(
             model_path=self.model_path,
+            cosyvoice_home=self.cosyvoice_home,
             device=self.device,
             use_fp16=self.use_fp16,
             load_trt=self.load_trt,

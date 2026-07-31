@@ -47,6 +47,7 @@ class CosyVoiceAdapter:
         # Store initialization parameters for lazy loading
         self._init_params = {
             "model_path": None,
+            "cosyvoice_home": None,
             "device": "auto",
             "use_fp16": True,
             "load_trt": False,
@@ -55,6 +56,7 @@ class CosyVoiceAdapter:
     
     def initialize_engine(self,
                          model_path: Optional[str] = None,
+                         cosyvoice_home: Optional[str] = None,
                          device: str = "auto",
                          use_fp16: bool = True,
                          load_trt: bool = False,
@@ -72,6 +74,7 @@ class CosyVoiceAdapter:
         # Store initialization parameters for lazy loading
         self._init_params.update({
             "model_path": model_path,
+            "cosyvoice_home": cosyvoice_home,
             "device": device,
             "use_fp16": use_fp16,
             "load_trt": load_trt,
@@ -95,6 +98,7 @@ class CosyVoiceAdapter:
         # Initialize engine
         self.engine = CosyVoiceEngine(
             model_dir=model_path,
+            source_root=cosyvoice_home,
             device=device,
             use_fp16=use_fp16,
             load_trt=load_trt,

@@ -247,6 +247,223 @@ def _prepare_external_index_runtime(tmp_path):
     return source_root, model_dir, python_executable, voice_path, temp_root
 
 
+def _load_external_cosyvoice_subprocess_module():
+    path = REPO_ROOT / "engines" / "cosyvoice" / "external_subprocess.py"
+    assert path.is_file(), "plugin-owned external CosyVoice subprocess adapter is missing"
+    spec = importlib.util.spec_from_file_location("external_cosyvoice_subprocess_test", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_external_cosyvoice_runner_module():
+    path = REPO_ROOT / "engines" / "cosyvoice" / "external_subprocess_runner.py"
+    assert path.is_file(), "plugin-owned external CosyVoice subprocess runner is missing"
+    spec = importlib.util.spec_from_file_location("external_cosyvoice_runner_test", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _prepare_external_cosyvoice_runtime(tmp_path):
+    source_root = tmp_path / "cosyvoice-source"
+    model_dir = source_root / "pretrained_models" / "CosyVoice-300M"
+    inference_module = source_root / "cosyvoice" / "cli" / "cosyvoice.py"
+    inference_module.parent.mkdir(parents=True)
+    inference_module.write_text("def AutoModel(**kwargs): pass\n", encoding="utf-8")
+    (source_root / "third_party" / "Matcha-TTS").mkdir(parents=True)
+    python_executable = source_root / ".venv" / "Scripts" / "python.exe"
+    python_executable.parent.mkdir(parents=True)
+    python_executable.touch()
+    model_dir.mkdir(parents=True)
+    (model_dir / "cosyvoice.yaml").write_text("sample_rate: 22050\n", encoding="utf-8")
+    for name in ("llm.pt", "flow.pt", "hift.pt", "campplus.onnx", "speech_tokenizer_v1.onnx"):
+        (model_dir / name).touch()
+    voice_path = source_root / "voice.wav"
+    with wave.open(str(voice_path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x01\x00" * 160)
+    temp_root = tmp_path / "temp"
+    temp_root.mkdir()
+    return source_root, model_dir, python_executable, voice_path, temp_root
+
+
+@pytest.mark.unit
+def test_external_cosyvoice_subprocess_uses_checkout_venv_offline_and_cleans_temp(monkeypatch, tmp_path):
+    module = _load_external_cosyvoice_subprocess_module()
+    source_root, model_dir, python_executable, voice_path, temp_root = _prepare_external_cosyvoice_runtime(tmp_path)
+    observed = {}
+
+    class FakeProcess:
+        pid = 5242
+        returncode = 0
+
+        def __init__(self, command, **kwargs):
+            observed["command"] = command
+            observed["kwargs"] = kwargs
+
+        def communicate(self, timeout):
+            observed["timeout"] = timeout
+            manifest = json.loads(Path(observed["command"][2]).read_text(encoding="utf-8"))
+            observed["manifest"] = manifest
+            with wave.open(manifest["output_path"], "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(24000)
+                handle.writeframes(b"\x10\x00" * 240)
+            return "official stdout", ""
+
+    monkeypatch.setattr(module.subprocess, "Popen", FakeProcess)
+    proxy = module.ExternalCosyVoiceSubprocessProxy(
+        source_root=source_root,
+        model_dir=model_dir,
+        device="cuda",
+        use_fp16=True,
+        timeout_seconds=321.0,
+        temp_root=temp_root,
+    )
+
+    outputs = list(
+        proxy.inference_cross_lingual(
+            tts_text="真实外部推理。",
+            prompt_wav=str(voice_path),
+            stream=False,
+            speed=1.1,
+            text_frontend=True,
+        )
+    )
+
+    assert observed["command"][0] == str(python_executable)
+    assert Path(observed["command"][1]).name == "external_subprocess_runner.py"
+    assert observed["kwargs"]["cwd"] == str(source_root)
+    assert observed["timeout"] == 321.0
+    child_environment = observed["kwargs"]["env"]
+    assert child_environment["TTS_AUDIO_SUITE_OFFLINE"] == "1"
+    assert child_environment["HF_HUB_OFFLINE"] == "1"
+    assert child_environment["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert observed["manifest"]["mode"] == "cross_lingual"
+    assert observed["manifest"]["text"] == "真实外部推理。"
+    assert outputs[0]["tts_speech"].shape == (1, 240)
+    assert proxy.sample_rate == 24000
+    assert not list(temp_root.iterdir())
+
+
+@pytest.mark.unit
+def test_external_cosyvoice_runner_uses_only_local_assets_and_selects_v1_loader(monkeypatch, tmp_path):
+    module = _load_external_cosyvoice_runner_module()
+    source_root, model_dir, _, voice_path, _ = _prepare_external_cosyvoice_runtime(tmp_path)
+    output_path = tmp_path / "result.wav"
+    manifest_path = tmp_path / "request.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "source_root": str(source_root),
+                "model_dir": str(model_dir),
+                "output_path": str(output_path),
+                "constructor": {"use_fp16": True, "load_trt": False, "load_vllm": False},
+                "mode": "cross_lingual",
+                "text": "You are a helpful assistant.<|endofprompt|>离线推理。",
+                "prompt_wav": str(voice_path),
+                "prompt_text": "",
+                "instruct_text": "",
+                "speed": 1.0,
+                "stream": False,
+                "text_frontend": True,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    observed = {"snapshot_calls": []}
+
+    modelscope_module = types.ModuleType("modelscope")
+
+    def snapshot_download(model_id, **kwargs):
+        observed["snapshot_calls"].append((model_id, kwargs))
+        return str(tmp_path / "cache")
+
+    modelscope_module.snapshot_download = snapshot_download
+    cosyvoice_package = types.ModuleType("cosyvoice")
+    cosyvoice_package.__path__ = [str(source_root / "cosyvoice")]
+    cli_package = types.ModuleType("cosyvoice.cli")
+    cli_package.__path__ = [str(source_root / "cosyvoice" / "cli")]
+    official_module = types.ModuleType("cosyvoice.cli.cosyvoice")
+    official_module.__file__ = str(source_root / "cosyvoice" / "cli" / "cosyvoice.py")
+
+    class FakeModel:
+        sample_rate = 22050
+
+        def inference_cross_lingual(self, **kwargs):
+            observed["inference"] = kwargs
+            yield {"tts_speech": module.torch.ones(1, 2205)}
+
+    def auto_model(**kwargs):
+        observed["constructor"] = kwargs
+        import modelscope
+        import socket
+
+        modelscope.snapshot_download("pengzhendong/wetext")
+        sock = socket.socket()
+        try:
+            sock.connect(("203.0.113.1", 443))
+        except RuntimeError as exc:
+            observed["network_error"] = str(exc)
+        finally:
+            sock.close()
+        return FakeModel()
+
+    official_module.AutoModel = auto_model
+    monkeypatch.setitem(sys.modules, "modelscope", modelscope_module)
+    monkeypatch.setitem(sys.modules, "cosyvoice", cosyvoice_package)
+    monkeypatch.setitem(sys.modules, "cosyvoice.cli", cli_package)
+    monkeypatch.setitem(sys.modules, "cosyvoice.cli.cosyvoice", official_module)
+
+    assert module.main([str(manifest_path)]) == 0
+
+    samples, sample_rate = module.soundfile.read(output_path, dtype="float32")
+    assert sample_rate == 24000
+    assert samples.size > 0
+    assert observed["snapshot_calls"] == [
+        ("pengzhendong/wetext", {"local_files_only": True})
+    ]
+    assert "load_vllm" not in observed["constructor"]
+    assert observed["inference"]["tts_text"] == "离线推理。"
+    assert "network access is disabled" in observed["network_error"]
+
+
+@pytest.mark.unit
+def test_cosyvoice_processor_passes_registered_checkout_to_adapter(monkeypatch):
+    import engines.processors.cosyvoice_processor as processor_module
+
+    initialized = {}
+
+    class FakeAdapter:
+        def initialize_engine(self, **kwargs):
+            initialized.update(kwargs)
+
+        def get_sample_rate(self):
+            return 24000
+
+    monkeypatch.setattr(processor_module, "CosyVoiceAdapter", FakeAdapter)
+    monkeypatch.setattr(processor_module.CosyVoiceProcessor, "_setup_character_parser", lambda self: None)
+
+    processor_module.CosyVoiceProcessor(
+        {
+            "model_path": "C:/cosy/model",
+            "cosyvoice_home": "C:/cosy/source",
+            "device": "cuda",
+        }
+    )
+
+    assert initialized["model_path"] == "C:/cosy/model"
+    assert initialized["cosyvoice_home"] == "C:/cosy/source"
+
+
+
 @pytest.mark.unit
 def test_external_index_subprocess_uses_checkout_venv_and_cleans_temp(monkeypatch, tmp_path):
     module = _load_external_index_subprocess_module()
