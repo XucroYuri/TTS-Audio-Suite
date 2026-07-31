@@ -85,6 +85,15 @@ TARGETS_PROFILE_NODE_IDS = {
     "TTSExternalIndexTTSEngine",
     "TTSExternalCosyVoiceEngine",
     "TTSExternalAudioAsset",
+    "UnifiedTTSTextNode",
+}
+
+OPTIONAL_ENGINE_NODE_IDS = {
+    "ChatterBoxEngineNode",
+    "F5TTSEngineNode",
+    "GPTSovitsEngineNode",
+    "IndexTTSEngineNode",
+    "CosyVoiceEngineNode",
 }
 
 
@@ -143,7 +152,7 @@ def test_plugin_loader_probe_cleans_up_its_temporary_directories(tmp_path: Path)
 
 
 @pytest.mark.unit
-def test_targets_profile_registers_only_api_bridge_nodes():
+def test_targets_profile_registers_bridge_and_dependency_clean_workflow_nodes():
     result = subprocess.run(
         [sys.executable, str(Path(__file__).resolve()), "--probe"],
         cwd=REPO_ROOT,
@@ -160,6 +169,7 @@ def test_targets_profile_registers_only_api_bridge_nodes():
     assert result.returncode == 0, result.stderr or result.stdout
     payload = json.loads(result.stdout)
     assert set(payload["node_ids"]) == TARGETS_PROFILE_NODE_IDS
+    assert not OPTIONAL_ENGINE_NODE_IDS.intersection(payload["node_ids"])
 
 
 def _install_comfyui_test_stubs(probe_root: Path):

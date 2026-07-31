@@ -43,6 +43,7 @@ targets_profile_enabled = (
 TARGETS_PROFILE_NODE_FILES = {
     "api_bridge/resource_engine_nodes.py",
     "api_bridge/audio_asset_node.py",
+    "unified/tts_text_node.py",
 }
 
 # Transformers version check deferred to first engine use to avoid
