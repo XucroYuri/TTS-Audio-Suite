@@ -293,11 +293,13 @@ def test_gpt_adapter_uses_registered_checkout_runtime_without_inprocess_import(m
         device="cpu",
         use_fp16=False,
         gpt_sovits_home="C:/gpt/source",
+        python_executable="D:/portable/python.exe",
         version="v2",
     )
 
     assert observed == {
         "source_root": "C:/gpt/source",
+        "python_executable": "D:/portable/python.exe",
         "gpt_weight": "C:/gpt/s1.ckpt",
         "sovits_weight": "C:/gpt/s2.pth",
         "bert_path": "C:/gpt/bert",
@@ -306,6 +308,53 @@ def test_gpt_adapter_uses_registered_checkout_runtime_without_inprocess_import(m
         "use_fp16": False,
         "version": "v2",
     }
+
+
+@pytest.mark.unit
+def test_gpt_bridge_forwards_private_interpreter_without_public_input(monkeypatch):
+    resource = types.SimpleNamespace(
+        resource_id="local-resource",
+        engine="gpt_sovits",
+        source_root=Path("C:/gpt/source"),
+        gpt_weight=Path("C:/gpt/s1.ckpt"),
+        sovits_weight=Path("C:/gpt/s2.pth"),
+        bert_path=Path("C:/gpt/bert"),
+        cnhubert_path=Path("C:/gpt/cnhubert"),
+        python_executable=Path("D:/portable/python.exe"),
+        version="v2",
+    )
+    registry = types.SimpleNamespace(require=lambda resource_id, engine: resource)
+    monkeypatch.setattr(bridge, "get_resource_registry", lambda: registry)
+
+    (engine,) = bridge.ExternalGPTSovitsEngineNode().create_engine("local-resource")
+
+    assert engine["config"]["python_executable"] == str(Path("D:/portable/python.exe"))
+    inputs = bridge.ExternalGPTSovitsEngineNode.INPUT_TYPES()
+    assert "python_executable" not in inputs["required"]
+    assert "python_executable" not in inputs.get("optional", {})
+
+
+@pytest.mark.unit
+def test_gpt_processor_forwards_private_interpreter_to_adapter():
+    import engines.processors.gpt_sovits_processor as processor_module
+
+    initialized = {}
+
+    class FakeAdapter:
+        def initialize_engine(self, **kwargs):
+            initialized.update(kwargs)
+
+    processor_module.GPTSovitsProcessor(
+        {
+            "gpt_weight": "C:/gpt/s1.ckpt",
+            "sovits_weight": "C:/gpt/s2.pth",
+            "gpt_sovits_home": "C:/gpt/source",
+            "python_executable": "D:/portable/python.exe",
+        },
+        adapter=FakeAdapter(),
+    )
+
+    assert initialized["python_executable"] == "D:/portable/python.exe"
 
 
 @pytest.mark.unit
@@ -318,6 +367,7 @@ def test_gpt_adapter_reuses_same_stateless_registered_runtime_proxy(monkeypatch,
     class FakeExternalRuntime:
         def __init__(self, **kwargs):
             self.source_root = Path(kwargs["source_root"]).resolve()
+            self.python_executable = self.source_root / ".venv" / "Scripts" / "python.exe"
             created.append(kwargs)
 
         def cleanup(self):
@@ -672,6 +722,40 @@ def test_external_gpt_subprocess_preserves_registered_lineage_offline_and_cleans
     assert sample_rate == 32000
     assert samples.shape == (320,)
     assert not list(temp_root.iterdir())
+
+
+@pytest.mark.unit
+def test_external_gpt_subprocess_uses_explicit_registered_interpreter(tmp_path):
+    module = _load_external_gpt_subprocess_module()
+    (
+        source_root,
+        checkout_interpreter,
+        gpt_weight,
+        sovits_weight,
+        bert_path,
+        cnhubert_path,
+        _,
+        temp_root,
+    ) = _prepare_external_gpt_runtime(tmp_path)
+    explicit_interpreter = tmp_path / "portable" / "python.exe"
+    explicit_interpreter.parent.mkdir()
+    explicit_interpreter.touch()
+
+    proxy = module.ExternalGPTSovitsSubprocessProxy(
+        source_root=source_root,
+        gpt_weight=gpt_weight,
+        sovits_weight=sovits_weight,
+        bert_path=bert_path,
+        cnhubert_path=cnhubert_path,
+        python_executable=explicit_interpreter,
+        device="cuda",
+        use_fp16=True,
+        version="v2",
+        temp_root=temp_root,
+    )
+
+    assert proxy.python_executable == explicit_interpreter.resolve()
+    assert proxy.python_executable != checkout_interpreter.resolve()
 
 
 @pytest.mark.unit
@@ -1884,7 +1968,11 @@ def _force_cache_valid(monkeypatch):
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ("changed_key", "changed_value"),
-    [("resource_id", "gpt-resource-b"), ("version", "v3")],
+    [
+        ("resource_id", "gpt-resource-b"),
+        ("version", "v3"),
+        ("python_executable", "D:/portable/python.exe"),
+    ],
 )
 def test_text_cache_recreates_gpt_processor_when_resource_identity_changes(
     monkeypatch, changed_key, changed_value
@@ -1919,6 +2007,49 @@ def test_text_cache_recreates_gpt_processor_when_resource_identity_changes(
 
     assert node._create_proper_engine_node_instance(first) is not node._create_proper_engine_node_instance(second)
     assert len(created) == 2
+
+
+@pytest.mark.unit
+def test_registered_gpt_constructor_error_is_not_converted_to_silent_audio(monkeypatch):
+    module = _load_unified_node("tts_text_node.py", "gpt_constructor_error_test")
+
+    def fail_constructor(_engine_data):
+        raise RuntimeError("External GPT-SoVITS subprocess exited 1: torchcodec mismatch")
+
+    node = module.UnifiedTTSTextNode()
+    monkeypatch.setattr(node, "_create_proper_engine_node_instance", fail_constructor)
+    engine = {
+        "engine_type": "gpt_sovits",
+        "config": {"resource_id": "gpt-sovits-local"},
+    }
+
+    with pytest.raises(RuntimeError, match="torchcodec mismatch"):
+        node.generate_speech(engine, "must fail terminally", "none", 0)
+
+
+@pytest.mark.unit
+def test_registered_gpt_processor_constructor_preserves_external_diagnostic(monkeypatch):
+    module = _load_unified_node("tts_text_node.py", "gpt_processor_constructor_error_test")
+    import engines.processors.gpt_sovits_processor as processor_module
+
+    class FailedProcessor:
+        def __init__(self, _config):
+            raise RuntimeError("External GPT-SoVITS compatible interpreter is missing")
+
+    monkeypatch.setattr(processor_module, "GPTSovitsProcessor", FailedProcessor)
+    node = module.UnifiedTTSTextNode()
+    engine = {
+        "engine_type": "gpt_sovits",
+        "config": {
+            "resource_id": "gpt-sovits-local",
+            "gpt_weight": "C:/gpt/s1.ckpt",
+            "sovits_weight": "C:/gpt/s2.pth",
+            "gpt_sovits_home": "C:/gpt/source",
+        },
+    }
+
+    with pytest.raises(RuntimeError, match="compatible interpreter is missing"):
+        node._create_proper_engine_node_instance(engine)
 
 
 _INDEX_LOAD_KEYS = [

@@ -67,6 +67,7 @@ def _build_resource(resource_id: str, raw: dict[str, Any]) -> TTSResource:
         sovits_weight=_resolved(raw, "sovits_weight"),
         bert_path=_resolved(raw, "bert_path"),
         cnhubert_path=_resolved(raw, "cnhubert_path"),
+        python_executable=_resolved(raw, "python_executable"),
         version=raw.get("version", "v2"),
     )
 
@@ -83,6 +84,8 @@ def _validate_resource(resource: TTSResource) -> None:
             raise ValueError(f"invalid GPT-SoVITS version: {resource.version}")
         _require_path(resource.gpt_weight, f"{resource.resource_id}.gpt_weight")
         _require_path(resource.sovits_weight, f"{resource.resource_id}.sovits_weight")
+        if resource.python_executable is not None:
+            _require_path(resource.python_executable, f"{resource.resource_id}.python_executable")
     else:
         _require_path(resource.model_dir, f"{resource.resource_id}.model_dir", directory=True)
 

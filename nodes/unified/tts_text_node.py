@@ -352,6 +352,7 @@ Back to the main narrator voice for the conclusion.""",
                 stable_params['gpt_sovits_home'] = config.get('gpt_sovits_home')
                 stable_params['version'] = config.get('version', 'v2')
                 stable_params['use_fp16'] = config.get('use_fp16', True)
+                stable_params['python_executable'] = config.get('python_executable')
 
             # For CosyVoice, include actual model identity and load options in cache key.
             # Both 0.5B variants share the same folder, so using only the resolved path or
@@ -944,6 +945,10 @@ Back to the main narrator voice for the conclusion.""",
                 raise
             if "MOSS LoRA/base model mismatch" in str(e):
                 raise
+            if engine_type == "gpt_sovits":
+                failed_config = engine_data.get("config") or engine_data
+                if failed_config.get("resource_id"):
+                    raise
             print(f"❌ Failed to create engine node instance: {e}")
             return None
 
@@ -1093,6 +1098,7 @@ Back to the main narrator voice for the conclusion.""",
             Tuple of (audio_tensor, generation_info)
         """
         engine_type = None
+        config = {}
         try:
             # Apply Python 3.12 CUDNN compatibility fix before TTS generation
             from utils.comfyui_compatibility import ensure_python312_cudnn_fix
@@ -2154,6 +2160,8 @@ Back to the main narrator voice for the conclusion.""",
             if "MOSS LoRA/base model mismatch" in str(e):
                 raise
             if engine_type == "index_tts":
+                raise
+            if engine_type == "gpt_sovits" and config.get("resource_id"):
                 raise
             if isinstance(e, InterruptedError):
                 raise

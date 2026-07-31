@@ -74,12 +74,20 @@ class GPTSovitsAdapter:
         use_fp16: bool = True,
         character_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
         gpt_sovits_home: Optional[str] = None,
+        python_executable: Optional[str] = None,
         version: str = "v2",
     ) -> None:
         if not gpt_sovits_home:
             raise RuntimeError("gpt_sovits_home or GPT_SOVITS_PATH must point to an official GPT-SoVITS checkout")
         resolved_device = resolve_torch_device(device)
         normalized_fp16 = bool(use_fp16) and resolved_device != "cpu"
+        default_python = os.path.join(
+            gpt_sovits_home,
+            ".venv",
+            "Scripts" if os.name == "nt" else "bin",
+            "python.exe" if os.name == "nt" else "python",
+        )
+        requested_python = python_executable or default_python
 
         if character_profiles:
             self._character_profiles = dict(character_profiles)
@@ -93,6 +101,8 @@ class GPTSovitsAdapter:
             and self._version == version
             and os.path.normcase(os.path.realpath(str(self.runtime.source_root)))
             == os.path.normcase(os.path.realpath(gpt_sovits_home))
+            and os.path.normcase(os.path.realpath(str(self.runtime.python_executable)))
+            == os.path.normcase(os.path.realpath(requested_python))
         )
         if unchanged:
             return
@@ -104,6 +114,7 @@ class GPTSovitsAdapter:
             sovits_weight=sovits_weight,
             bert_path=bert_path,
             cnhubert_path=cnhubert_path,
+            python_executable=python_executable,
             device=resolved_device,
             use_fp16=normalized_fp16,
             version=version,

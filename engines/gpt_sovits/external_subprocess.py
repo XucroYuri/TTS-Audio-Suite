@@ -30,6 +30,7 @@ class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
         device: str,
         use_fp16: bool,
         version: str,
+        python_executable: str | Path | None = None,
         timeout_seconds: float = 900.0,
         termination_grace_seconds: float = 5.0,
         temp_root: str | Path | None = None,
@@ -45,7 +46,11 @@ class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
         self.timeout_seconds = float(timeout_seconds)
         self.termination_grace_seconds = float(termination_grace_seconds)
         self.temp_root = Path(temp_root).resolve() if temp_root is not None else None
-        self.python_executable = self._resolve_python_executable()
+        self.python_executable = (
+            Path(python_executable).resolve()
+            if python_executable is not None
+            else self._resolve_python_executable()
+        )
         self.runner_path = Path(__file__).with_name("external_subprocess_runner.py").resolve()
         self._validate_runtime()
 

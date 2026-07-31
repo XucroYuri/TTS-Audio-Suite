@@ -164,3 +164,55 @@ def test_registry_resources_are_immutable_and_paths_are_resolved(tmp_path: Path,
     assert resource.model_dir == model.resolve()
     with pytest.raises(AttributeError):
         resource.model_dir = source
+
+
+def test_registry_resolves_private_gpt_interpreter_without_capability_leakage(tmp_path: Path):
+    source = tmp_path / "gpt"
+    source.mkdir()
+    gpt_weight = source / "voice.ckpt"
+    sovits_weight = source / "voice.pth"
+    interpreter = tmp_path / "runtime" / "python.exe"
+    interpreter.parent.mkdir()
+    for path in (gpt_weight, sovits_weight, interpreter):
+        path.write_bytes(b"local")
+    config = tmp_path / "resources.yaml"
+    config.write_text(
+        "version: 1\nresources:\n  local-gpt:\n"
+        "    engine: gpt_sovits\n"
+        f"    source_root: '{source.as_posix()}'\n"
+        f"    gpt_weight: '{gpt_weight.as_posix()}'\n"
+        f"    sovits_weight: '{sovits_weight.as_posix()}'\n"
+        f"    python_executable: '{interpreter.as_posix()}'\n",
+        encoding="utf-8",
+    )
+
+    registry = ResourceRegistry.load(config)
+
+    assert registry.require("local-gpt", "gpt_sovits").python_executable == interpreter.resolve()
+    capabilities = registry.capabilities()
+    assert capabilities == [
+        {"resource_id": "local-gpt", "engine": "gpt_sovits", "ready": True}
+    ]
+    assert "python_executable" not in capabilities[0]
+
+
+def test_registry_rejects_missing_private_gpt_interpreter(tmp_path: Path):
+    source = tmp_path / "gpt"
+    source.mkdir()
+    gpt_weight = source / "voice.ckpt"
+    sovits_weight = source / "voice.pth"
+    gpt_weight.write_bytes(b"gpt")
+    sovits_weight.write_bytes(b"sovits")
+    config = tmp_path / "resources.yaml"
+    config.write_text(
+        "version: 1\nresources:\n  local-gpt:\n"
+        "    engine: gpt_sovits\n"
+        f"    source_root: '{source.as_posix()}'\n"
+        f"    gpt_weight: '{gpt_weight.as_posix()}'\n"
+        f"    sovits_weight: '{sovits_weight.as_posix()}'\n"
+        f"    python_executable: '{(tmp_path / 'missing-python.exe').as_posix()}'\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="local-gpt.python_executable"):
+        ResourceRegistry.load(config)
