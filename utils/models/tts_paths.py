@@ -33,11 +33,6 @@ import folder_paths
 from typing import List
 
 
-# Cache TTS root directories once; these do not change at runtime.
-_tts_roots: List[str] = []
-_tts_roots_populated: bool = False
-
-
 def get_tts_root_dirs() -> List[str]:
     """Return all registered TTS model root directories.
 
@@ -49,13 +44,6 @@ def get_tts_root_dirs() -> List[str]:
     Guaranteed to include at least one entry (the default models/TTS).
     Thread-safe to call from any engine.
     """
-    global _tts_roots, _tts_roots_populated
-
-    if _tts_roots_populated:
-        return _tts_roots
-
-    _tts_roots_populated = True
-
     resolved: List[str] = []
     seen: set = set()
 
@@ -67,8 +55,7 @@ def get_tts_root_dirs() -> List[str]:
             seen.add(normalized)
             resolved.append(normalized)
 
-    _tts_roots = resolved
-    return _tts_roots
+    return resolved
 
 
 def find_tts_model_subdir(subdir: str) -> List[str]:
