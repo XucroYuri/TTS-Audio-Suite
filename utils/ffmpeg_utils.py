@@ -15,7 +15,12 @@ class FFmpegUtils:
 
     _ffmpeg_available = None
     _ffmpeg_path = None
+    _ffprobe_available = None
+    _ffprobe_path = None
     _check_performed = False
+    _ffprobe_check_performed = False
+    _toolchain_validated = False
+    _toolchain_ok = False
 
     @classmethod
     def is_available(cls) -> bool:
@@ -43,6 +48,85 @@ class FFmpegUtils:
         """Get ffmpeg executable path if available"""
         cls.is_available()  # Ensure check is performed
         return cls._ffmpeg_path
+
+    @classmethod
+    def is_ffprobe_available(cls) -> bool:
+        """Check if ffprobe is available in system PATH.
+
+        Separate from is_available() because F5-TTS preprocessing
+        (pydub.AudioSegment.from_file) requires both ffmpeg AND ffprobe.
+        """
+        if cls._ffprobe_check_performed:
+            return cls._ffprobe_available
+
+        cls._ffprobe_check_performed = True
+
+        try:
+            result = subprocess.run(['ffprobe', '-version'],
+                                  capture_output=True,
+                                  timeout=5)
+            cls._ffprobe_available = result.returncode == 0
+            if cls._ffprobe_available:
+                cls._ffprobe_path = 'ffprobe'
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+            cls._ffprobe_available = False
+            cls._ffprobe_path = None
+
+        return cls._ffprobe_available
+
+    @classmethod
+    def is_audio_toolchain_available(cls) -> bool:
+        """Check if the complete audio toolchain (ffmpeg + ffprobe) is ready.
+
+        F5-TTS reference-audio preprocessing uses pydub, which shells out to
+        BOTH ffmpeg and ffprobe. Missing either will cause silent one-second
+        zero-tensor outputs that look like successful synthesis.
+
+        Returns True only when both binaries are reachable on PATH.
+        """
+        if cls._toolchain_validated:
+            return cls._toolchain_ok
+
+        cls._toolchain_validated = True
+        ffmpeg_ok = cls.is_available()
+        ffprobe_ok = cls.is_ffprobe_available()
+        cls._toolchain_ok = ffmpeg_ok and ffprobe_ok
+        return cls._toolchain_ok
+
+    @classmethod
+    def require_audio_toolchain(cls, feature: str = "audio processing") -> None:
+        """Raise actionable error if ffmpeg or ffprobe is missing.
+
+        Call this at the earliest point before any pydub/AudioSegment call,
+        so users get a clear fix instruction instead of silent zero audio.
+
+        Args:
+            feature: Human-readable feature name for the error message.
+        Raises:
+            RuntimeError with platform-specific install instructions.
+        """
+        if cls.is_audio_toolchain_available():
+            return
+
+        cls.is_available()       # populate _ffmpeg_available
+        cls.is_ffprobe_available()  # populate _ffprobe_available
+
+        missing = []
+        if not cls._ffmpeg_available:
+            missing.append("ffmpeg")
+        if not cls._ffprobe_available:
+            missing.append("ffprobe")
+
+        msg = (
+            f"{feature} requires both ffmpeg and ffprobe on PATH. "
+            f"Missing: {', '.join(missing)}.\n"
+            f"Install with:\n"
+            f"  Windows: winget install --id Gyan.FFmpeg --exact\n"
+            f"  macOS:   brew install ffmpeg\n"
+            f"  Linux:   sudo apt-get install ffmpeg  (or dnf install ffmpeg)\n"
+            f"Then restart ComfyUI."
+        )
+        raise RuntimeError(msg)
 
     @classmethod
     def run_command(cls, cmd_args: List[str], **kwargs) -> subprocess.CompletedProcess:
