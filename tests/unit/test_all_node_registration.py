@@ -129,7 +129,7 @@ def test_plugin_loader_probe_keeps_the_parent_process_unchanged():
 
 
 @pytest.mark.unit
-def test_plugin_loader_probe_preserves_the_child_numpy_bool_alias():
+def test_plugin_loader_probe_preserves_an_existing_child_numpy_bool_alias():
     result = subprocess.run(
         [sys.executable, str(Path(__file__).resolve()), "--probe"],
         cwd=REPO_ROOT,
@@ -141,7 +141,9 @@ def test_plugin_loader_probe_preserves_the_child_numpy_bool_alias():
 
     assert result.returncode == 0, result.stderr or result.stdout
     payload = json.loads(result.stdout)
-    assert payload["numpy_bool_unchanged"] is True
+    assert "MossClipStagingNode" in payload["node_ids"]
+    assert payload["numpy_bool_alias_available"] is True
+    assert payload["existing_numpy_bool_alias_preserved"] is True
 
 
 @pytest.mark.unit
@@ -278,7 +280,8 @@ def _run_probe():
     logs = io.StringIO()
     import numpy as np
 
-    numpy_bool_before = getattr(np, "bool", None)
+    numpy_bool_was_present = "bool" in np.__dict__
+    numpy_bool_before = np.__dict__.get("bool")
     try:
         with redirect_stdout(logs), redirect_stderr(logs):
             node_ids = _probe_node_ids()
@@ -287,7 +290,10 @@ def _run_probe():
         return 1
     print(json.dumps({
         "node_ids": node_ids,
-        "numpy_bool_unchanged": getattr(np, "bool", None) is numpy_bool_before,
+        "numpy_bool_alias_available": "bool" in np.__dict__,
+        "existing_numpy_bool_alias_preserved": (
+            not numpy_bool_was_present or np.__dict__.get("bool") is numpy_bool_before
+        ),
     }))
     return 0
 
