@@ -129,6 +129,22 @@ def test_plugin_loader_probe_keeps_the_parent_process_unchanged():
 
 
 @pytest.mark.unit
+def test_plugin_loader_probe_preserves_the_child_numpy_bool_alias():
+    result = subprocess.run(
+        [sys.executable, str(Path(__file__).resolve()), "--probe"],
+        cwd=REPO_ROOT,
+        env={**os.environ, "COMFYUI_TESTING": "1"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["numpy_bool_unchanged"] is True
+
+
+@pytest.mark.unit
 def test_plugin_loader_probe_cleans_up_its_temporary_directories(tmp_path: Path):
     temporary_root = tmp_path / "probe-temp"
     temporary_root.mkdir()
@@ -260,13 +276,19 @@ def _probe_node_ids():
 
 def _run_probe():
     logs = io.StringIO()
+    import numpy as np
+
+    numpy_bool_before = getattr(np, "bool", None)
     try:
         with redirect_stdout(logs), redirect_stderr(logs):
             node_ids = _probe_node_ids()
     except Exception:
         print(f"{traceback.format_exc()}Captured loader logs:\n{logs.getvalue()}", file=sys.stderr)
         return 1
-    print(json.dumps({"node_ids": node_ids}))
+    print(json.dumps({
+        "node_ids": node_ids,
+        "numpy_bool_unchanged": getattr(np, "bool", None) is numpy_bool_before,
+    }))
     return 0
 
 
