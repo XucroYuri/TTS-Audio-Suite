@@ -22,8 +22,9 @@ No new product patch is required from the fetched branches:
 - `origin/main` is already an ancestor of the integration base.
 - `upstream/main` adds only `2f587b22b32a42a8d1873ac0926136378c9fc44f`
   (side-effect-free nested-module probing).  The fork already has the same
-  behavior in `e349dc005181873f1b6755ff73f4b0b50c0e0feb`, including
-  `test_module_available_finds_nested_module_without_importing_parent`.
+  behavior in `e349dc00fc83c1c70a06366b8e3c9dfb6a6de359`: the implementation is
+  `install.py`'s `PathFinder.find_spec` walk and the binding regression test is
+  `tests/unit/test_installer_runtime_repairs.py::test_module_available_finds_nested_module_without_importing_parent`.
   Replaying the upstream release commit would also discard the fork's
   `tts_more_targets` installer profile, so it is classified
   **upstream-covered**, not cherry-picked.
