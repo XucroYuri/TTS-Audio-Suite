@@ -48,6 +48,18 @@ def _collect_audio(result) -> tuple[int, np.ndarray]:
     return sample_rate, np.concatenate(chunks)
 
 
+def _configure_official_speaker_encoder(path: str) -> None:
+    """Override GPT-SoVITS' cwd-relative speaker encoder path when registered."""
+    if not path:
+        return
+    import sv
+
+    speaker_encoder = Path(path).resolve()
+    if not speaker_encoder.is_file():
+        raise RuntimeError(f"GPT-SoVITS speaker encoder checkpoint is missing: {speaker_encoder}")
+    sv.sv_path = str(speaker_encoder)
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if len(arguments) != 1:
@@ -87,6 +99,8 @@ def main(argv: list[str] | None = None) -> int:
 
         with _offline_runtime():
             from TTS_infer_pack.TTS import TTS, TTS_Config
+
+            _configure_official_speaker_encoder(str(config.get("sv_path", "")))
 
             official_module = sys.modules["TTS_infer_pack.TTS"]
             imported_source = Path(official_module.__file__).resolve()

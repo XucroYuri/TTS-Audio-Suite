@@ -74,6 +74,10 @@ class ExternalGPTSovitsEngineNode:
             "top_p": top_p,
             "temperature": temperature,
         }
+        if getattr(resource, "sv_path", None):
+            config["sv_path"] = str(resource.sv_path)
+        if getattr(resource, "runtime_root", None):
+            config["runtime_root"] = str(resource.runtime_root)
         if resource.python_executable is not None:
             config["python_executable"] = str(resource.python_executable)
         return _engine_data("gpt_sovits", "GPTSovitsAdapter", resource_id, config)

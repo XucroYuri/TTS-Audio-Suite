@@ -31,6 +31,8 @@ class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
         sovits_weight: str | Path,
         bert_path: str | Path,
         cnhubert_path: str | Path,
+        sv_path: str | Path | None = None,
+        runtime_root: str | Path | None = None,
         device: str,
         use_fp16: bool,
         version: str,
@@ -45,6 +47,8 @@ class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
         self.sovits_weight = Path(sovits_weight).resolve()
         self.bert_path = Path(bert_path).resolve()
         self.cnhubert_path = Path(cnhubert_path).resolve()
+        self.sv_path = Path(sv_path).resolve() if sv_path else None
+        self.runtime_root = Path(runtime_root).resolve() if runtime_root else self.source_root
         self.device = str(device)
         self.use_fp16 = bool(use_fp16)
         self.version = str(version)
@@ -88,6 +92,10 @@ class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
             raise ValueError("GPT-SoVITS subprocess termination grace must be positive")
         if self.temp_root is not None and not self.temp_root.is_dir():
             raise RuntimeError(f"GPT-SoVITS temporary root is not a directory: {self.temp_root}")
+        if self.sv_path is not None and not self.sv_path.is_file():
+            raise RuntimeError(f"GPT-SoVITS speaker encoder checkpoint is missing: {self.sv_path}")
+        if not self.runtime_root.is_dir():
+            raise RuntimeError(f"GPT-SoVITS runtime root is not a directory: {self.runtime_root}")
 
     def run(self, inputs: dict[str, Any]):
         inference = dict(inputs)
@@ -105,19 +113,22 @@ class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
             temporary_path = Path(temporary_directory.name)
             child_output = temporary_path / "output.wav"
             manifest_path = temporary_path / "request.json"
+            manifest_config = {
+                "gpt_weight": str(self.gpt_weight),
+                "sovits_weight": str(self.sovits_weight),
+                "bert_path": str(self.bert_path),
+                "cnhubert_path": str(self.cnhubert_path),
+                "version": self.version,
+            }
+            if self.sv_path is not None:
+                manifest_config["sv_path"] = str(self.sv_path)
+            if self.runtime_root != self.source_root:
+                manifest_config["runtime_root"] = str(self.runtime_root)
             manifest = {
                 "source_root": str(self.source_root),
                 "output_path": str(child_output),
                 "runtime_config_path": str(temporary_path / "runtime-config.yaml"),
-                "config": {
-                    "gpt_weight": str(self.gpt_weight),
-                    "sovits_weight": str(self.sovits_weight),
-                    "bert_path": str(self.bert_path),
-                    "cnhubert_path": str(self.cnhubert_path),
-                    "device": self.device,
-                    "use_fp16": self.use_fp16,
-                    "version": self.version,
-                },
+                "config": {**manifest_config, "device": self.device, "use_fp16": self.use_fp16},
                 "inference": inference,
             }
             manifest_path.write_text(
@@ -142,7 +153,7 @@ class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
                 }
             )
             popen_kwargs: dict[str, Any] = {
-                "cwd": str(self.source_root),
+                "cwd": str(self.runtime_root),
                 "env": environment,
                 "stdout": subprocess.PIPE,
                 "stderr": subprocess.PIPE,

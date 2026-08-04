@@ -75,6 +75,8 @@ class GPTSovitsAdapter:
         character_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
         gpt_sovits_home: Optional[str] = None,
         python_executable: Optional[str] = None,
+        sv_path: Optional[str] = None,
+        runtime_root: Optional[str] = None,
         version: str = "v2",
     ) -> None:
         if not gpt_sovits_home:
@@ -106,21 +108,32 @@ class GPTSovitsAdapter:
             == os.path.normcase(os.path.realpath(gpt_sovits_home))
             and os.path.normcase(os.path.realpath(str(self.runtime.python_executable)))
             == os.path.normcase(os.path.realpath(requested_python))
+            and os.path.normcase(os.path.realpath(str(getattr(self.runtime, "sv_path", "") or "")))
+            == os.path.normcase(os.path.realpath(str(sv_path or "")))
+            and os.path.normcase(os.path.realpath(str(getattr(self.runtime, "runtime_root", "") or "")))
+            == os.path.normcase(os.path.realpath(str(runtime_root or "")))
         )
         if unchanged:
             return
 
         self.unload()
+        proxy_kwargs = {
+            "source_root": gpt_sovits_home,
+            "gpt_weight": gpt_weight,
+            "sovits_weight": sovits_weight,
+            "bert_path": bert_path,
+            "cnhubert_path": cnhubert_path,
+            "python_executable": python_executable,
+            "device": resolved_device,
+            "use_fp16": normalized_fp16,
+            "version": version,
+        }
+        if sv_path:
+            proxy_kwargs["sv_path"] = sv_path
+        if runtime_root:
+            proxy_kwargs["runtime_root"] = runtime_root
         self.runtime = ExternalGPTSovitsSubprocessProxy(
-            source_root=gpt_sovits_home,
-            gpt_weight=gpt_weight,
-            sovits_weight=sovits_weight,
-            bert_path=bert_path,
-            cnhubert_path=cnhubert_path,
-            python_executable=python_executable,
-            device=resolved_device,
-            use_fp16=normalized_fp16,
-            version=version,
+            **proxy_kwargs,
         )
         self._current_gpt_path = gpt_weight
         self._current_sovits_path = sovits_weight

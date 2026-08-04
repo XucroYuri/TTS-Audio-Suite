@@ -28,6 +28,10 @@ class GPTSovitsProcessor:
             initialize_kwargs["version"] = self.config["version"]
         if self.config.get("python_executable"):
             initialize_kwargs["python_executable"] = self.config["python_executable"]
+        if self.config.get("sv_path"):
+            initialize_kwargs["sv_path"] = self.config["sv_path"]
+        if self.config.get("runtime_root"):
+            initialize_kwargs["runtime_root"] = self.config["runtime_root"]
         self.adapter.initialize_engine(**initialize_kwargs)
 
     def update_config(self, new_config: dict[str, Any]) -> None:

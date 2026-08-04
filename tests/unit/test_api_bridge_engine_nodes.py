@@ -2319,6 +2319,28 @@ def test_index_engine_uses_external_subprocess_for_registered_checkout(monkeypat
 
 
 @pytest.mark.unit
+def test_index_engine_preserves_complete_explicit_model_directory(monkeypatch, tmp_path):
+    import engines.index_tts.index_tts as engine_module
+
+    source_root = tmp_path / "source"
+    model_dir = tmp_path / "model"
+    source_root.mkdir()
+    model_dir.mkdir()
+    (model_dir / "config.yaml").write_text("model: local\n", encoding="utf-8")
+
+    class FakeExternalProxy:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(engine_module, "ExternalIndexTTSSubprocessProxy", FakeExternalProxy, raising=False)
+    engine = engine_module.IndexTTSEngine(
+        model_dir=str(model_dir), source_root=str(source_root), device="cpu", use_fp16=False
+    )
+
+    assert engine.model_dir == str(model_dir)
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("inference_fails", [False, True])
 def test_index_engine_generate_does_not_create_unused_output_wav(monkeypatch, tmp_path, inference_fails):
     import engines.index_tts.index_tts as engine_module
