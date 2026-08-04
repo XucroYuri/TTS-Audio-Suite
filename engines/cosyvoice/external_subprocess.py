@@ -189,6 +189,8 @@ class ExternalCosyVoiceSubprocessProxy(ExternalIndexTTSSubprocessProxy):
         primary_error: BaseException | None = None
         try:
             temporary_path = Path(temporary_directory.name)
+            for directory_name in ("pycache", "numba-cache", "matplotlib"):
+                (temporary_path / directory_name).mkdir(parents=True, exist_ok=True)
             child_output = temporary_path / "output.wav"
             manifest_path = temporary_path / "request.json"
             manifest = {
