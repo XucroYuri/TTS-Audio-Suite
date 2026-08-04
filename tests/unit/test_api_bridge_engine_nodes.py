@@ -2199,6 +2199,41 @@ def _install_failing_temporary_directory(monkeypatch, module, message):
 
 
 @pytest.mark.unit
+def test_windows_private_temp_cleanup_retries_transient_directory_race(monkeypatch, tmp_path):
+    module = _load_external_index_subprocess_module()
+    temporary_path = tmp_path / "private-child"
+    temporary_path.mkdir()
+    (temporary_path / "late-cache-write").write_bytes(b"cache")
+
+    class TransientTemporaryDirectory:
+        name = str(temporary_path)
+
+        def cleanup(self):
+            error = OSError(145, "directory not empty")
+            error.winerror = 145
+            raise error
+
+    real_rmtree = module.shutil.rmtree
+    attempts = 0
+
+    def retrying_rmtree(path):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            error = OSError(145, "directory not empty")
+            error.winerror = 145
+            raise error
+        return real_rmtree(path)
+
+    monkeypatch.setattr(module.os, "name", "nt")
+    monkeypatch.setattr(module.shutil, "rmtree", retrying_rmtree)
+    module._cleanup_temporary_directory(TransientTemporaryDirectory(), temporary_path)
+
+    assert attempts == 2
+    assert not temporary_path.exists()
+
+
+@pytest.mark.unit
 def test_external_index_success_surfaces_temporary_cleanup_failure(monkeypatch, tmp_path):
     module = _load_external_index_subprocess_module()
     source_root, model_dir, _, voice_path, temp_root = _prepare_external_index_runtime(tmp_path)

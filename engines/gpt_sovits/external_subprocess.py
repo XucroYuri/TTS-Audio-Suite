@@ -18,6 +18,7 @@ from engines.index_tts.external_subprocess import (
     InterruptCheck,
     _private_child_path,
     _comfyui_interrupt_requested,
+    _cleanup_temporary_directory,
 )
 
 
@@ -205,7 +206,7 @@ class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
             raise
         finally:
             try:
-                temporary_directory.cleanup()
+                _cleanup_temporary_directory(temporary_directory, temporary_path)
             except Exception as cleanup_error:
                 diagnostic = f"temporary directory cleanup failed: {cleanup_error}"
                 if primary_error is None:

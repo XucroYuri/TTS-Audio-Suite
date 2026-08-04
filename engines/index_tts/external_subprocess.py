@@ -28,6 +28,9 @@ _WINDOWS_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 
 InterruptCheck = Callable[[], bool]
 
+_WINDOWS_TRANSIENT_CLEANUP_ERRNOS = frozenset({5, 32, 145})
+_WINDOWS_CLEANUP_RETRY_SECONDS = 3.0
+
 
 def _private_child_path(path: str | Path) -> str:
     """Return an absolute child-cache path that survives Windows MAX_PATH."""
@@ -37,6 +40,41 @@ def _private_child_path(path: str | Path) -> str:
     if absolute.startswith("\\\\"):
         return "\\\\?\\UNC\\" + absolute[2:]
     return "\\\\?\\" + absolute
+
+
+def _cleanup_temporary_directory(temporary_directory, temporary_path: Path) -> None:
+    """Remove a child-run directory, retrying only transient Windows races."""
+    last_error: OSError | None = None
+    try:
+        temporary_directory.cleanup()
+        return
+    except OSError as cleanup_error:
+        last_error = cleanup_error
+        error_number = getattr(cleanup_error, "winerror", None)
+        if error_number is None:
+            error_number = getattr(cleanup_error, "errno", None)
+        if os.name != "nt" or error_number not in _WINDOWS_TRANSIENT_CLEANUP_ERRNOS:
+            raise
+
+    deadline = time.monotonic() + _WINDOWS_CLEANUP_RETRY_SECONDS
+    delay = 0.05
+    while True:
+        try:
+            if not temporary_path.exists():
+                return
+            shutil.rmtree(temporary_path)
+            # Give a late Numba writer one short quiescence interval before
+            # declaring the private directory gone.
+            time.sleep(0.05)
+            if not temporary_path.exists():
+                return
+        except OSError as retry_error:
+            last_error = retry_error
+        if time.monotonic() >= deadline:
+            assert last_error is not None
+            raise last_error
+        time.sleep(delay)
+        delay = min(delay * 2.0, 0.5)
 
 
 def _comfyui_interrupt_requested() -> bool:
@@ -319,7 +357,7 @@ class ExternalIndexTTSSubprocessProxy:
             raise
         finally:
             try:
-                temporary_directory.cleanup()
+                _cleanup_temporary_directory(temporary_directory, temporary_path)
             except Exception as cleanup_error:
                 diagnostic = f"temporary directory cleanup failed: {cleanup_error}"
                 if primary_error is None:
