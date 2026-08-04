@@ -63,9 +63,12 @@ def test_windows_cleanup_keeps_non_transient_error_fail_closed(monkeypatch, tmp_
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("callback_api", ["onexc", "onerror"])
-def test_windows_cleanup_rmtree_callback_ignores_disappearing_child(
-    monkeypatch, tmp_path, callback_api
+@pytest.mark.parametrize(
+    ("callback_api", "error_number"),
+    [("onexc", 3), ("onexc", 145), ("onerror", 3), ("onerror", 145)],
+)
+def test_windows_cleanup_rmtree_callback_handles_transient_directory_races(
+    monkeypatch, tmp_path, callback_api, error_number
 ):
     module = _load_external_index_subprocess_module()
     temporary_path = tmp_path / "private-child"
@@ -85,19 +88,19 @@ def test_windows_cleanup_rmtree_callback_ignores_disappearing_child(
 
         def racing_rmtree(path, *, onexc=None):
             assert onexc is not None
-            error = OSError(3, "the child disappeared during cleanup")
-            error.winerror = 3
-            onexc(os.unlink, late_cache_path, error)
+            error = OSError(error_number, "the child disappeared during cleanup")
+            error.winerror = error_number
+            onexc(os.rmdir if error_number == 145 else os.unlink, late_cache_path, error)
             real_rmtree(path)
 
     else:
 
         def racing_rmtree(path, *, onerror=None):
             assert onerror is not None
-            error = OSError(3, "the child disappeared during cleanup")
-            error.winerror = 3
+            error = OSError(error_number, "the child disappeared during cleanup")
+            error.winerror = error_number
             onerror(
-                os.unlink,
+                os.rmdir if error_number == 145 else os.unlink,
                 late_cache_path,
                 (OSError, error, None),
             )
@@ -139,5 +142,100 @@ def test_windows_cleanup_rmtree_callback_does_not_swallow_permission_error(
     with pytest.raises(OSError, match="access is denied"):
         module._cleanup_temporary_directory(BrokenTemporaryDirectory(), temporary_path)
 
+    assert temporary_path.exists()
+    assert (temporary_path / "sentinel").read_bytes() == b"keep"
+
+
+@pytest.mark.unit
+def test_windows_cleanup_allows_directory_not_empty_race_to_quiesce(
+    monkeypatch, tmp_path
+):
+    module = _load_external_index_subprocess_module()
+    temporary_path = tmp_path / "private-child"
+    temporary_path.mkdir()
+    (temporary_path / "late-numba-cache").write_bytes(b"cache")
+
+    class FakeClock:
+        def __init__(self):
+            self.value = 0.0
+
+        def monotonic(self):
+            self.value += 1.0
+            return self.value
+
+        @staticmethod
+        def sleep(_seconds):
+            return None
+
+    class RacingTemporaryDirectory:
+        def cleanup(self):
+            error = OSError(145, "directory not empty")
+            error.winerror = 145
+            raise error
+
+    real_rmtree = module.shutil.rmtree
+    attempts = 0
+
+    def delayed_rmtree(path):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 6:
+            error = OSError(145, "directory not empty")
+            error.winerror = 145
+            raise error
+        return real_rmtree(path)
+
+    monkeypatch.setattr(module.os, "name", "nt")
+    monkeypatch.setattr(module, "time", FakeClock())
+    monkeypatch.setattr(module.shutil, "rmtree", delayed_rmtree)
+    module._cleanup_temporary_directory(RacingTemporaryDirectory(), temporary_path)
+
+    assert attempts == 6
+    assert not temporary_path.exists()
+
+
+@pytest.mark.unit
+def test_windows_cleanup_rejects_persistent_directory_not_empty_race(
+    monkeypatch, tmp_path
+):
+    module = _load_external_index_subprocess_module()
+    temporary_path = tmp_path / "private-child"
+    temporary_path.mkdir()
+    (temporary_path / "sentinel").write_bytes(b"keep")
+
+    class FakeClock:
+        def __init__(self):
+            self.value = 0.0
+
+        def monotonic(self):
+            self.value += 1.0
+            return self.value
+
+        @staticmethod
+        def sleep(_seconds):
+            return None
+
+    class RacingTemporaryDirectory:
+        def cleanup(self):
+            error = OSError(145, "directory not empty")
+            error.winerror = 145
+            raise error
+
+    attempts = 0
+
+    def persistent_rmtree(_path):
+        nonlocal attempts
+        attempts += 1
+        error = OSError(145, "directory not empty")
+        error.winerror = 145
+        raise error
+
+    monkeypatch.setattr(module.os, "name", "nt")
+    monkeypatch.setattr(module, "time", FakeClock())
+    monkeypatch.setattr(module.shutil, "rmtree", persistent_rmtree)
+    with pytest.raises(OSError, match="directory not empty"):
+        module._cleanup_temporary_directory(RacingTemporaryDirectory(), temporary_path)
+
+    assert attempts == int(module._WINDOWS_DIRECTORY_NOT_EMPTY_RETRY_SECONDS)
     assert temporary_path.exists()
     assert (temporary_path / "sentinel").read_bytes() == b"keep"

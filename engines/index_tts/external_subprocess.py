@@ -35,6 +35,9 @@ InterruptCheck = Callable[[], bool]
 # non-empty races, while keeping unrelated errors fail-closed.
 _WINDOWS_TRANSIENT_CLEANUP_ERRNOS = frozenset({3, 5, 32, 145})
 _WINDOWS_CLEANUP_RETRY_SECONDS = 3.0
+# A late Numba cache directory can remain non-empty after the runner exits;
+# allow that specific rmdir race a longer, still finite quiescence window.
+_WINDOWS_DIRECTORY_NOT_EMPTY_RETRY_SECONDS = 10.0
 
 
 def _private_child_path(path: str | Path) -> str:
@@ -47,18 +50,30 @@ def _private_child_path(path: str | Path) -> str:
     return "\\\\?\\" + absolute
 
 
-def _is_windows_missing_child(error: BaseException) -> bool:
-    if os.name != "nt":
-        return False
+def _windows_error_number(error: BaseException) -> int | None:
     error_number = getattr(error, "winerror", None)
     if error_number is None:
         error_number = getattr(error, "errno", None)
-    return error_number == 3
+    return error_number
+
+
+def _is_windows_missing_child(error: BaseException) -> bool:
+    if os.name != "nt":
+        return False
+    return _windows_error_number(error) == 3
+
+
+def _is_windows_directory_not_empty(error: BaseException) -> bool:
+    if os.name != "nt":
+        return False
+    return _windows_error_number(error) == 145
 
 
 def _rmtree_onexc(function, path, error) -> None:
-    """Ignore only a child that disappeared during the removal walk."""
-    if _is_windows_missing_child(error):
+    """Continue a removal walk across transient child-directory races."""
+    if _is_windows_missing_child(error) or (
+        function is os.rmdir and _is_windows_directory_not_empty(error)
+    ):
         return
     raise error
 
@@ -66,7 +81,9 @@ def _rmtree_onexc(function, path, error) -> None:
 def _rmtree_onerror(function, path, error_info) -> None:
     """Legacy ``shutil.rmtree`` callback equivalent of :func:`_rmtree_onexc`."""
     error = error_info[1]
-    if _is_windows_missing_child(error):
+    if _is_windows_missing_child(error) or (
+        function is os.rmdir and _is_windows_directory_not_empty(error)
+    ):
         return
     raise error.with_traceback(error_info[2])
 
@@ -93,13 +110,16 @@ def _cleanup_temporary_directory(temporary_directory, temporary_path: Path) -> N
         return
     except OSError as cleanup_error:
         last_error = cleanup_error
-        error_number = getattr(cleanup_error, "winerror", None)
-        if error_number is None:
-            error_number = getattr(cleanup_error, "errno", None)
+        error_number = _windows_error_number(cleanup_error)
         if os.name != "nt" or error_number not in _WINDOWS_TRANSIENT_CLEANUP_ERRNOS:
             raise
 
-    deadline = time.monotonic() + _WINDOWS_CLEANUP_RETRY_SECONDS
+    retry_seconds = (
+        _WINDOWS_DIRECTORY_NOT_EMPTY_RETRY_SECONDS
+        if error_number == 145
+        else _WINDOWS_CLEANUP_RETRY_SECONDS
+    )
+    deadline = time.monotonic() + retry_seconds
     delay = 0.05
     while True:
         try:
