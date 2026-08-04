@@ -276,7 +276,7 @@ class IndexTTSProcessor:
                     """Add segment context without hiding the original engine error."""
                     try:
                         return self.adapter.generate(**kwargs)
-                    except Exception as exc:
+                    except BaseException as exc:
                         # Avoid leaking temporary WAV files when an engine
                         # failure happens before the normal success cleanup.
                         for path in (kwargs.get("speaker_audio"), kwargs.get("emotion_audio")):
@@ -290,6 +290,8 @@ class IndexTTSProcessor:
                                 except OSError:
                                     pass
                         if _is_comfyui_interrupt(exc):
+                            raise
+                        if not isinstance(exc, Exception):
                             raise
                         raise RuntimeError(
                             f"IndexTTS-2 segment failed ({context}): "
@@ -653,8 +655,8 @@ class IndexTTSProcessor:
 
             return result
             
-        except Exception as e:
-            if _is_comfyui_interrupt(e):
+        except BaseException as e:
+            if _is_comfyui_interrupt(e) or not isinstance(e, Exception):
                 raise
             print(f"❌ IndexTTS-2 processor error: {e}")
             import traceback

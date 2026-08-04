@@ -768,12 +768,19 @@ def test_external_wait_preserves_comfy_cancellation_after_interrupt_flag_consume
         proxy._communicate_with_control(Running(), "IndexTTS")
 
 
-def _index_processor_for_comfy_interrupt_test(monkeypatch, *, parser_raises=False):
+def _index_processor_for_comfy_interrupt_test(
+    monkeypatch,
+    *,
+    parser_raises=False,
+    base_exception=False,
+):
     import engines.processors.index_tts_processor as processor_module
 
     comfy_model_management = sys.modules["comfy.model_management"]
 
-    class ComfyInterrupt(Exception):
+    interrupt_base = BaseException if base_exception else Exception
+
+    class ComfyInterrupt(interrupt_base):
         pass
 
     monkeypatch.setattr(
@@ -783,8 +790,15 @@ def _index_processor_for_comfy_interrupt_test(monkeypatch, *, parser_raises=Fals
         raising=False,
     )
 
+    generated_paths = []
+
     class FakeAdapter:
         def generate(self, **kwargs):
+            generated_paths.extend(
+                path
+                for path in (kwargs.get("speaker_audio"), kwargs.get("emotion_audio"))
+                if isinstance(path, str)
+            )
             raise ComfyInterrupt("cancelled")
 
     class FakeParser:
@@ -813,20 +827,45 @@ def _index_processor_for_comfy_interrupt_test(monkeypatch, *, parser_raises=Fals
     processor.character_parser = FakeParser()
     processor.pause_processor = FakePauseProcessor()
     processor.sample_rate = 22050
-    return processor, ComfyInterrupt
+    return processor, ComfyInterrupt, generated_paths, processor_module
 
 
-def test_index_processor_preserves_comfy_interrupt_from_inner_generation(monkeypatch):
-    processor, comfy_interrupt = _index_processor_for_comfy_interrupt_test(monkeypatch)
+@pytest.mark.parametrize("base_exception", [False, True])
+def test_index_processor_preserves_comfy_interrupt_from_inner_generation(
+    monkeypatch,
+    base_exception,
+):
+    processor, comfy_interrupt, generated_paths, processor_module = _index_processor_for_comfy_interrupt_test(
+        monkeypatch,
+        base_exception=base_exception,
+    )
+    monkeypatch.setattr(
+        processor_module,
+        "save_audio_safe",
+        lambda path, waveform, sample_rate: Path(path).write_bytes(b"test"),
+    )
 
     with pytest.raises(comfy_interrupt, match="cancelled"):
-        processor.process_text("hello")
+        processor.process_text(
+            "hello",
+            speaker_audio={
+                "waveform": processor_module.torch.ones(1, 8),
+                "sample_rate": 22050,
+            },
+        )
+    assert generated_paths
+    assert all(not Path(path).exists() for path in generated_paths)
 
 
-def test_index_processor_preserves_comfy_interrupt_from_outer_processing(monkeypatch):
-    processor, comfy_interrupt = _index_processor_for_comfy_interrupt_test(
+@pytest.mark.parametrize("base_exception", [False, True])
+def test_index_processor_preserves_comfy_interrupt_from_outer_processing(
+    monkeypatch,
+    base_exception,
+):
+    processor, comfy_interrupt, _, _ = _index_processor_for_comfy_interrupt_test(
         monkeypatch,
         parser_raises=True,
+        base_exception=base_exception,
     )
 
     with pytest.raises(comfy_interrupt, match="cancelled"):
