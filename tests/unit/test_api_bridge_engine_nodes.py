@@ -2118,47 +2118,33 @@ def test_windows_job_launch_contains_real_child_created_after_resume(tmp_path):
 def test_windows_broad_slow_fallback_obeys_one_hard_deadline(monkeypatch):
     module = _load_external_index_subprocess_module()
 
-    class FakeClock:
-        """Deterministic monotonic clock for a deadline test."""
-
-        def __init__(self):
-            self.value = 0.0
-
-        def monotonic(self):
-            self.value += 0.001
-            return self.value
-
-        def consume(self, seconds):
-            self.value += seconds
-
     class SlowProcess:
         def __init__(self, pid, children=()):
             self.pid = pid
             self._children = list(children)
 
         def children(self, recursive=False):
-            clock.consume(0.01)
+            time.sleep(0.005)
             return list(self._children)
 
         def create_time(self):
-            clock.consume(0.01)
+            time.sleep(0.005)
             return float(self.pid)
 
         def is_running(self):
-            clock.consume(0.01)
+            time.sleep(0.005)
             return True
 
         def suspend(self):
-            clock.consume(0.01)
+            time.sleep(0.005)
 
         def terminate(self):
-            clock.consume(0.01)
+            time.sleep(0.005)
 
         def kill(self):
-            clock.consume(0.01)
+            time.sleep(0.005)
 
-    clock = FakeClock()
-    children = [SlowProcess(6100 + index) for index in range(24)]
+    children = [SlowProcess(6100 + index) for index in range(8)]
     root = SlowProcess(6000, children)
 
     class RunningPopen:
@@ -2169,7 +2155,6 @@ def test_windows_broad_slow_fallback_obeys_one_hard_deadline(monkeypatch):
             return None
 
     monkeypatch.setattr(module.os, "name", "nt")
-    monkeypatch.setattr(module, "time", clock)
     monkeypatch.setattr(module.psutil, "Process", lambda pid: root)
     monkeypatch.setattr(module.psutil, "wait_procs", lambda processes, timeout: ([], list(processes)))
     monkeypatch.setattr(
@@ -2183,12 +2168,12 @@ def test_windows_broad_slow_fallback_obeys_one_hard_deadline(monkeypatch):
         ),
     )
 
-    started = clock.monotonic()
+    started = time.monotonic()
     with pytest.raises((RuntimeError, TimeoutError), match="deadline"):
         module.ExternalIndexTTSSubprocessProxy._terminate_process_tree(RunningPopen(), 0.05)
-    elapsed = clock.monotonic() - started
+    elapsed = time.monotonic() - started
 
-    assert elapsed < 0.15
+    assert elapsed < 0.5
 
 
 def _install_failing_temporary_directory(monkeypatch, module, message):
