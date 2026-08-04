@@ -113,12 +113,23 @@ def _cleanup_temporary_directory(temporary_directory, temporary_path: Path) -> N
     last_error: OSError | None = None
     try:
         temporary_directory.cleanup()
-        return
     except OSError as cleanup_error:
         last_error = cleanup_error
         error_number = _windows_error_number(cleanup_error)
         if os.name != "nt" or error_number not in _WINDOWS_TRANSIENT_CLEANUP_ERRNOS:
             raise
+    else:
+        # ``TemporaryDirectory.cleanup`` can swallow a Windows directory-not-
+        # empty callback error and return while the child directory remains.
+        # Treat that as the same bounded, transient race instead of reporting
+        # a false cleanup success.  On non-Windows hosts this is an invariant
+        # violation and remains fail-closed.
+        if not temporary_path.exists():
+            return
+        if os.name != "nt":
+            raise OSError("temporary directory remained after cleanup")
+        error_number = 145
+        last_error = OSError(error_number, "temporary directory remained after cleanup")
 
     retry_seconds = (
         _WINDOWS_DIRECTORY_NOT_EMPTY_RETRY_SECONDS
