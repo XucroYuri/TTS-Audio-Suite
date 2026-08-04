@@ -16,6 +16,7 @@ import torch
 from engines.index_tts.external_subprocess import (
     ExternalIndexTTSSubprocessProxy,
     InterruptCheck,
+    _private_child_path,
     _comfyui_interrupt_requested,
 )
 
@@ -227,9 +228,9 @@ class ExternalCosyVoiceSubprocessProxy(ExternalIndexTTSSubprocessProxy):
                     "PYTHONIOENCODING": "utf-8",
                     "PYTHONUTF8": "1",
                     "PYTHONDONTWRITEBYTECODE": "1",
-                    "PYTHONPYCACHEPREFIX": str(temporary_path / "pycache"),
-                    "NUMBA_CACHE_DIR": str(temporary_path / "numba-cache"),
-                    "MPLCONFIGDIR": str(temporary_path / "matplotlib"),
+                    "PYTHONPYCACHEPREFIX": _private_child_path(temporary_path / "pycache"),
+                    "NUMBA_CACHE_DIR": _private_child_path(temporary_path / "numba-cache"),
+                    "MPLCONFIGDIR": _private_child_path(temporary_path / "matplotlib"),
                 }
             )
             popen_kwargs: dict[str, Any] = {
