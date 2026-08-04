@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
 import types
@@ -80,6 +81,14 @@ def _prepare_runtime(tmp_path: Path):
     )
 
 
+def _path_without_windows_extended_prefix(value: str) -> Path:
+    if os.name == "nt" and value.startswith("\\\\?\\"):
+        value = value[4:]
+        if value.startswith("UNC\\"):
+            value = "\\\\" + value[4:]
+    return Path(value)
+
+
 @pytest.mark.unit
 def test_gpt_child_cache_directories_exist_before_start_and_are_private(monkeypatch, tmp_path):
     module = _load_external_gpt_subprocess_module()
@@ -104,11 +113,13 @@ def test_gpt_child_cache_directories_exist_before_start_and_are_private(monkeypa
             observed["kwargs"] = kwargs
             environment = kwargs["env"]
             for variable in ("PYTHONPYCACHEPREFIX", "NUMBA_CACHE_DIR", "MPLCONFIGDIR"):
-                cache_path = Path(environment[variable])
+                cache_path = _path_without_windows_extended_prefix(environment[variable])
                 # This assertion runs from the Popen replacement, proving the
                 # child-private directories exist before process creation.
                 assert cache_path.is_dir(), f"{variable} missing before child start"
                 assert cache_path.is_relative_to(temp_root.resolve())
+                if os.name == "nt":
+                    assert environment[variable].startswith("\\\\?\\")
             assert not (temp_root.parent / "numba-cache").exists()
 
         def communicate(self, timeout):

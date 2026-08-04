@@ -29,6 +29,16 @@ _WINDOWS_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 InterruptCheck = Callable[[], bool]
 
 
+def _private_child_path(path: str | Path) -> str:
+    """Return an absolute child-cache path that survives Windows MAX_PATH."""
+    absolute = os.path.abspath(os.fspath(path))
+    if os.name != "nt" or absolute.startswith("\\\\?\\"):
+        return absolute
+    if absolute.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + absolute[2:]
+    return "\\\\?\\" + absolute
+
+
 def _comfyui_interrupt_requested() -> bool:
     try:
         from comfy.model_management import processing_interrupted
@@ -253,9 +263,9 @@ class ExternalIndexTTSSubprocessProxy:
                     "PYTHONIOENCODING": "utf-8",
                     "PYTHONUTF8": "1",
                     "PYTHONDONTWRITEBYTECODE": "1",
-                    "PYTHONPYCACHEPREFIX": str(temporary_path / "pycache"),
-                    "NUMBA_CACHE_DIR": str(temporary_path / "numba-cache"),
-                    "MPLCONFIGDIR": str(temporary_path / "matplotlib"),
+                    "PYTHONPYCACHEPREFIX": _private_child_path(temporary_path / "pycache"),
+                    "NUMBA_CACHE_DIR": _private_child_path(temporary_path / "numba-cache"),
+                    "MPLCONFIGDIR": _private_child_path(temporary_path / "matplotlib"),
                 }
             )
             popen_kwargs: dict[str, Any] = {
