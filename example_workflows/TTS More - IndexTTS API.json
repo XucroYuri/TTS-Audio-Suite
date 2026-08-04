@@ -1,0 +1,51 @@
+{
+  "1": {
+    "class_type": "TTSExternalIndexTTSEngine",
+    "inputs": {
+      "resource_id": "indextts-local",
+      "device": "auto",
+      "use_fp16": true,
+      "emotion_alpha": 1.0,
+      "use_random": false,
+      "max_text_tokens_per_segment": 120,
+      "interval_silence": 200,
+      "temperature": 0.8,
+      "top_p": 0.8,
+      "top_k": 30,
+      "do_sample": true,
+      "length_penalty": 0.0,
+      "num_beams": 3,
+      "repetition_penalty": 10.0,
+      "max_mel_tokens": 1500,
+      "use_cuda_kernel": "auto",
+      "use_deepspeed": false,
+      "use_torch_compile": false,
+      "use_accel": false,
+      "low_vram": false
+    }
+  },
+  "2": {
+    "class_type": "TTSExternalAudioAsset",
+    "inputs": {
+      "asset_id": "replace-with-uploaded-asset-id",
+      "reference_text": "参考音频对应文本"
+    }
+  },
+  "3": {
+    "class_type": "UnifiedTTSTextNode",
+    "inputs": {
+      "TTS_engine": ["1", 0],
+      "text": "请输入要合成的文本",
+      "narrator_voice": "none",
+      "seed": 1,
+      "opt_narrator": ["2", 0]
+    }
+  },
+  "4": {
+    "class_type": "SaveAudio",
+    "inputs": {
+      "audio": ["3", 0],
+      "filename_prefix": "tts_more_indextts"
+    }
+  }
+}

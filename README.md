@@ -25,6 +25,18 @@ Subtitle workflows are still a core focus: the suite can transcribe to SRT, rebu
 
 This section documents XucroYuri fork-specific integration behavior; it is not an upstream project commitment. The fork retains the complete upstream engine set and installer, while adding an API bridge for external clients.
 
+### TTS More workflow templates
+
+The fork ships three small API-prompt templates for the TTS More ComfyUI integration:
+
+| Template | Intended use | File |
+| --- | --- | --- |
+| Text-only | Synthesize text with a registered `resource_id` and no reference asset | [`TTS More - GPT-SoVITS API.json`](example_workflows/TTS%20More%20-%20GPT-SoVITS%20API.json), [`TTS More - IndexTTS API.json`](example_workflows/TTS%20More%20-%20IndexTTS%20API.json), [`TTS More - CosyVoice API.json`](example_workflows/TTS%20-%20CosyVoice%20API.json) |
+| Reference clone | Bind an uploaded `TTSExternalAudioAsset` to the unified text node | Same engine-specific files |
+| Controlled | Keep engine-specific controls (for example GPT-SoVITS cut method and sampling) in the API graph | Same engine-specific files |
+
+Replace the `resource_id`, text, and uploaded asset placeholders before queueing. These examples intentionally use the bridge nodes and `/prompt` queue contract; they do not start a separate engine WebUI.
+
 - Set `TTS_AUDIO_SUITE_RESOURCES` to the machine-local `resources.yaml` that defines bridge resources.
 - Discover available resource IDs at `/api/tts-audio-suite/v1/capabilities`.
 - Stage reference audio at `/api/tts-audio-suite/v1/assets/audio`.
