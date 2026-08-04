@@ -29,6 +29,16 @@ def _checkout_python(source_root: Path) -> Path:
     return source_root / ".venv" / scripts_directory / executable_name
 
 
+def _path_without_windows_extended_prefix(value: str) -> Path:
+    if os.name != "nt":
+        return Path(value)
+    if value.startswith("\\\\?\\UNC\\"):
+        return Path("\\\\" + value[8:])
+    if value.startswith("\\\\?\\"):
+        return Path(value[4:])
+    return Path(value)
+
+
 class FakeRegistry:
     def require(self, resource_id: str, engine: str) -> TTSResource:
         assert resource_id == "local-resource"
@@ -1522,11 +1532,11 @@ def test_external_index_subprocess_uses_checkout_venv_and_cleans_temp(monkeypatc
     assert observed["timeout"] == 0.25
     child_environment = observed["kwargs"]["env"]
     assert child_environment["PYTHONDONTWRITEBYTECODE"] == "1"
-    pycache_prefix = Path(child_environment["PYTHONPYCACHEPREFIX"])
+    pycache_prefix = _path_without_windows_extended_prefix(child_environment["PYTHONPYCACHEPREFIX"])
     assert pycache_prefix.is_relative_to(temp_root)
     assert not pycache_prefix.is_relative_to(source_root)
-    assert Path(child_environment["NUMBA_CACHE_DIR"]).is_relative_to(temp_root)
-    assert Path(child_environment["MPLCONFIGDIR"]).is_relative_to(temp_root)
+    assert _path_without_windows_extended_prefix(child_environment["NUMBA_CACHE_DIR"]).is_relative_to(temp_root)
+    assert _path_without_windows_extended_prefix(child_environment["MPLCONFIGDIR"]).is_relative_to(temp_root)
     assert observed["manifest"]["source_root"] == str(source_root)
     assert observed["manifest"]["model_dir"] == str(model_dir)
     assert observed["manifest"]["inference"]["text"] == "真实外部推理。"
