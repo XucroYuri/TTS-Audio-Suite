@@ -283,9 +283,8 @@ def _raise_processing_interrupted(engine_label: str, diagnostic: str) -> None:
         try:
             throw_exception_if_processing_interrupted()
         except BaseException:
-            # ComfyUI's interruption exception intentionally derives directly
-            # from BaseException, so processor-level ``except Exception``
-            # handlers cannot turn cancellation into a failed generation.
+            # Preserve ComfyUI's canonical interruption marker if the helper
+            # still owns the global flag.
             raise
         # The polling callback already observed an interruption before the
         # process tree was cleaned up.  Cleanup may take long enough for

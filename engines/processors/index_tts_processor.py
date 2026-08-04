@@ -61,6 +61,17 @@ from utils.voice.discovery import get_character_mapping
 from engines.adapters.index_tts_adapter import IndexTTSAdapter
 
 
+def _is_comfyui_interrupt(error: BaseException) -> bool:
+    """Identify ComfyUI cancellation without classifying ordinary errors as it."""
+    try:
+        from comfy.model_management import InterruptProcessingException
+    except ImportError:
+        return False
+    return isinstance(InterruptProcessingException, type) and isinstance(
+        error, InterruptProcessingException
+    )
+
+
 class IndexTTSProcessor:
     """
     Internal processor for IndexTTS-2 TTS generation.
@@ -278,6 +289,8 @@ class IndexTTSProcessor:
                                     os.unlink(path)
                                 except OSError:
                                     pass
+                        if _is_comfyui_interrupt(exc):
+                            raise
                         raise RuntimeError(
                             f"IndexTTS-2 segment failed ({context}): "
                             f"{type(exc).__name__}: {exc}"
@@ -641,6 +654,8 @@ class IndexTTSProcessor:
             return result
             
         except Exception as e:
+            if _is_comfyui_interrupt(e):
+                raise
             print(f"❌ IndexTTS-2 processor error: {e}")
             import traceback
             traceback.print_exc()

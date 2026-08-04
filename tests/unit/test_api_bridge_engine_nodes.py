@@ -730,7 +730,7 @@ def test_external_wait_preserves_comfy_cancellation_after_interrupt_flag_consume
     module = _load_external_index_subprocess_module()
     comfy_model_management = sys.modules["comfy.model_management"]
 
-    class ComfyInterrupt(BaseException):
+    class ComfyInterrupt(Exception):
         pass
 
     monkeypatch.setattr(
@@ -766,6 +766,71 @@ def test_external_wait_preserves_comfy_cancellation_after_interrupt_flag_consume
     )
     with pytest.raises(ComfyInterrupt):
         proxy._communicate_with_control(Running(), "IndexTTS")
+
+
+def _index_processor_for_comfy_interrupt_test(monkeypatch, *, parser_raises=False):
+    import engines.processors.index_tts_processor as processor_module
+
+    comfy_model_management = sys.modules["comfy.model_management"]
+
+    class ComfyInterrupt(Exception):
+        pass
+
+    monkeypatch.setattr(
+        comfy_model_management,
+        "InterruptProcessingException",
+        ComfyInterrupt,
+        raising=False,
+    )
+
+    class FakeAdapter:
+        def generate(self, **kwargs):
+            raise ComfyInterrupt("cancelled")
+
+    class FakeParser:
+        def parse_text_segments(self, text):
+            if parser_raises:
+                raise ComfyInterrupt("cancelled")
+            return [
+                types.SimpleNamespace(
+                    character="narrator",
+                    text=text,
+                    language="zh",
+                    emotion=None,
+                    parameters={},
+                )
+            ]
+
+    class FakePauseProcessor:
+        @staticmethod
+        def parse_pause_tags(text):
+            return [], text
+
+    monkeypatch.setattr(processor_module, "get_character_mapping", lambda *args, **kwargs: {})
+    processor = object.__new__(processor_module.IndexTTSProcessor)
+    processor.config = {}
+    processor.adapter = FakeAdapter()
+    processor.character_parser = FakeParser()
+    processor.pause_processor = FakePauseProcessor()
+    processor.sample_rate = 22050
+    return processor, ComfyInterrupt
+
+
+def test_index_processor_preserves_comfy_interrupt_from_inner_generation(monkeypatch):
+    processor, comfy_interrupt = _index_processor_for_comfy_interrupt_test(monkeypatch)
+
+    with pytest.raises(comfy_interrupt, match="cancelled"):
+        processor.process_text("hello")
+
+
+def test_index_processor_preserves_comfy_interrupt_from_outer_processing(monkeypatch):
+    processor, comfy_interrupt = _index_processor_for_comfy_interrupt_test(
+        monkeypatch,
+        parser_raises=True,
+    )
+
+    with pytest.raises(comfy_interrupt, match="cancelled"):
+        processor.process_text("hello")
 
 
 def test_external_wait_reports_cleanup_failure_instead_of_false_interrupt_success(monkeypatch):
