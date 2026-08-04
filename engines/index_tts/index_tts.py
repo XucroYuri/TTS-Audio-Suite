@@ -65,6 +65,12 @@ class IndexTTSEngine:
     def _find_model_directory(self, model_identifier: str) -> str:
         """Find IndexTTS-2 model directory using extra_model_paths configuration."""
         try:
+            # API bridge resources are already resolved to private absolute
+            # model paths. Trust a complete explicit directory instead of
+            # treating the path as a downloadable model identifier.
+            explicit_path = os.path.abspath(os.path.expanduser(str(model_identifier)))
+            if os.path.isabs(str(model_identifier)) and os.path.isfile(os.path.join(explicit_path, "config.yaml")):
+                return explicit_path
             # Handle local: prefix (following F5TTS pattern)
             if model_identifier.startswith("local:"):
                 model_name = model_identifier[6:]  # Remove "local:" prefix

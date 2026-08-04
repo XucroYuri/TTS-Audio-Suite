@@ -5,13 +5,16 @@ import sys
 from utils.compatibility import setup_numba_compatibility
 setup_numba_compatibility(quick_startup=True, verbose=False)
 
-# NumPy 2.x compatibility fix
+# NumPy compatibility for dependencies that still import removed scalar aliases.
 import numpy as np
-if not hasattr(np, 'float'):
-    np.float = float
-    np.int = int
-    np.complex = complex
-    np.bool = bool
+for alias_name, alias_value in {
+    "float": float,
+    "int": int,
+    "complex": complex,
+    "bool": bool,
+}.items():
+    if alias_name not in np.__dict__:
+        setattr(np, alias_name, alias_value)
     
 import audio_separator.separator as uvr
 

@@ -21,6 +21,7 @@ import sys
 # loaded package and extend only its module search path with this pack's utils.
 _project_root = os.path.dirname(__file__)
 _suite_utils_root = os.path.abspath(os.path.join(_project_root, "utils"))
+
 if _project_root in sys.path:
     sys.path.remove(_project_root)
 sys.path.insert(0, _project_root)
@@ -50,6 +51,19 @@ for _search_root in sys.path:
     if all(os.path.isfile(os.path.join(_candidate_utils, filename)) for filename in ("extra_config.py", "install_util.py")):
         _utils_search_path.append(_candidate_utils)
         _normalized_utils_paths.add(_normalized_candidate)
+
+# ComfyUI 0.12-era builds expose ``get_user_directory`` but not the scoped
+# helper used by the suite's resource and UI stores. Install a narrow shim
+# before loading nodes so prompt validation and API bridge lookup agree on the
+# same per-user directory.
+try:
+    import folder_paths as _folder_paths
+    from utils.compatibility.folder_paths_compat import ensure_system_user_directory
+
+    if ensure_system_user_directory(_folder_paths, fallback_root=os.path.join(_project_root, "user")):
+        print("TTS Audio Suite: installed folder_paths user-directory compatibility shim")
+except Exception as _folder_paths_compat_error:
+    print(f"TTS Audio Suite: folder_paths compatibility shim unavailable: {_folder_paths_compat_error}")
 
 from utils.hf_download_logging import configure_hf_download_logging
 

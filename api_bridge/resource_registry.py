@@ -67,6 +67,8 @@ def _build_resource(resource_id: str, raw: dict[str, Any]) -> TTSResource:
         sovits_weight=_resolved(raw, "sovits_weight"),
         bert_path=_resolved(raw, "bert_path"),
         cnhubert_path=_resolved(raw, "cnhubert_path"),
+        sv_path=_resolved(raw, "sv_path"),
+        runtime_root=_resolved(raw, "runtime_root"),
         python_executable=_resolved(raw, "python_executable"),
         version=raw.get("version", "v2"),
     )
@@ -86,6 +88,10 @@ def _validate_resource(resource: TTSResource) -> None:
         _require_path(resource.sovits_weight, f"{resource.resource_id}.sovits_weight")
         if resource.python_executable is not None:
             _require_path(resource.python_executable, f"{resource.resource_id}.python_executable")
+        if resource.sv_path is not None:
+            _require_path(resource.sv_path, f"{resource.resource_id}.sv_path")
+        if resource.runtime_root is not None:
+            _require_path(resource.runtime_root, f"{resource.resource_id}.runtime_root", directory=True)
     else:
         _require_path(resource.model_dir, f"{resource.resource_id}.model_dir", directory=True)
 

@@ -1,0 +1,38 @@
+{
+  "1": {
+    "class_type": "TTSExternalCosyVoiceEngine",
+    "inputs": {
+      "resource_id": "cosyvoice-local",
+      "device": "auto",
+      "use_fp16": true,
+      "speed": 1.0,
+      "instruct_text": "",
+      "load_trt": false,
+      "load_vllm": false
+    }
+  },
+  "2": {
+    "class_type": "TTSExternalAudioAsset",
+    "inputs": {
+      "asset_id": "replace-with-uploaded-asset-id",
+      "reference_text": "参考音频对应文本"
+    }
+  },
+  "3": {
+    "class_type": "UnifiedTTSTextNode",
+    "inputs": {
+      "TTS_engine": ["1", 0],
+      "text": "请输入要合成的文本",
+      "narrator_voice": "none",
+      "seed": 1,
+      "opt_narrator": ["2", 0]
+    }
+  },
+  "4": {
+    "class_type": "SaveAudio",
+    "inputs": {
+      "audio": ["3", 0],
+      "filename_prefix": "tts_more_cosyvoice"
+    }
+  }
+}

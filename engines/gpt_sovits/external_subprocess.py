@@ -13,7 +13,11 @@ from typing import Any
 import numpy as np
 import soundfile
 
-from engines.index_tts.external_subprocess import ExternalIndexTTSSubprocessProxy
+from engines.index_tts.external_subprocess import (
+    ExternalIndexTTSSubprocessProxy,
+    InterruptCheck,
+    _comfyui_interrupt_requested,
+)
 
 
 class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
@@ -27,6 +31,8 @@ class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
         sovits_weight: str | Path,
         bert_path: str | Path,
         cnhubert_path: str | Path,
+        sv_path: str | Path | None = None,
+        runtime_root: str | Path | None = None,
         device: str,
         use_fp16: bool,
         version: str,
@@ -34,18 +40,22 @@ class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
         timeout_seconds: float = 900.0,
         termination_grace_seconds: float = 5.0,
         temp_root: str | Path | None = None,
+        interrupt_check: InterruptCheck | None = None,
     ) -> None:
         self.source_root = Path(source_root).resolve()
         self.gpt_weight = Path(gpt_weight).resolve()
         self.sovits_weight = Path(sovits_weight).resolve()
         self.bert_path = Path(bert_path).resolve()
         self.cnhubert_path = Path(cnhubert_path).resolve()
+        self.sv_path = Path(sv_path).resolve() if sv_path else None
+        self.runtime_root = Path(runtime_root).resolve() if runtime_root else self.source_root
         self.device = str(device)
         self.use_fp16 = bool(use_fp16)
         self.version = str(version)
         self.timeout_seconds = float(timeout_seconds)
         self.termination_grace_seconds = float(termination_grace_seconds)
         self.temp_root = Path(temp_root).resolve() if temp_root is not None else None
+        self.interrupt_check = interrupt_check or _comfyui_interrupt_requested
         self.python_executable = (
             Path(python_executable).resolve()
             if python_executable is not None
@@ -82,6 +92,10 @@ class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
             raise ValueError("GPT-SoVITS subprocess termination grace must be positive")
         if self.temp_root is not None and not self.temp_root.is_dir():
             raise RuntimeError(f"GPT-SoVITS temporary root is not a directory: {self.temp_root}")
+        if self.sv_path is not None and not self.sv_path.is_file():
+            raise RuntimeError(f"GPT-SoVITS speaker encoder checkpoint is missing: {self.sv_path}")
+        if not self.runtime_root.is_dir():
+            raise RuntimeError(f"GPT-SoVITS runtime root is not a directory: {self.runtime_root}")
 
     def run(self, inputs: dict[str, Any]):
         inference = dict(inputs)
@@ -99,19 +113,22 @@ class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
             temporary_path = Path(temporary_directory.name)
             child_output = temporary_path / "output.wav"
             manifest_path = temporary_path / "request.json"
+            manifest_config = {
+                "gpt_weight": str(self.gpt_weight),
+                "sovits_weight": str(self.sovits_weight),
+                "bert_path": str(self.bert_path),
+                "cnhubert_path": str(self.cnhubert_path),
+                "version": self.version,
+            }
+            if self.sv_path is not None:
+                manifest_config["sv_path"] = str(self.sv_path)
+            if self.runtime_root != self.source_root:
+                manifest_config["runtime_root"] = str(self.runtime_root)
             manifest = {
                 "source_root": str(self.source_root),
                 "output_path": str(child_output),
                 "runtime_config_path": str(temporary_path / "runtime-config.yaml"),
-                "config": {
-                    "gpt_weight": str(self.gpt_weight),
-                    "sovits_weight": str(self.sovits_weight),
-                    "bert_path": str(self.bert_path),
-                    "cnhubert_path": str(self.cnhubert_path),
-                    "device": self.device,
-                    "use_fp16": self.use_fp16,
-                    "version": self.version,
-                },
+                "config": {**manifest_config, "device": self.device, "use_fp16": self.use_fp16},
                 "inference": inference,
             }
             manifest_path.write_text(
@@ -136,7 +153,7 @@ class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
                 }
             )
             popen_kwargs: dict[str, Any] = {
-                "cwd": str(self.source_root),
+                "cwd": str(self.runtime_root),
                 "env": environment,
                 "stdout": subprocess.PIPE,
                 "stderr": subprocess.PIPE,
@@ -150,16 +167,7 @@ class ExternalGPTSovitsSubprocessProxy(ExternalIndexTTSSubprocessProxy):
                 popen_kwargs["start_new_session"] = True
 
             process = self._start_process(command, popen_kwargs)
-            try:
-                stdout, stderr = process.communicate(timeout=self.timeout_seconds)
-            except subprocess.TimeoutExpired as exc:
-                stdout, stderr, cleanup_diagnostic = self._cleanup_timed_out_process(process)
-                diagnostic = (stderr or stdout or str(exc)).strip()
-                if cleanup_diagnostic:
-                    diagnostic = f"{diagnostic}; cleanup: {cleanup_diagnostic}"
-                raise TimeoutError(
-                    f"External GPT-SoVITS subprocess exceeded {self.timeout_seconds:g}s: {diagnostic}"
-                ) from exc
+            stdout, stderr = self._communicate_with_control(process, "GPT-SoVITS")
 
             try:
                 self._close_windows_job(process)

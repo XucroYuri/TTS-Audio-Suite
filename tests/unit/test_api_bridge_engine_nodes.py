@@ -660,6 +660,7 @@ def test_unregistered_cosyvoice_adapter_preserves_waveform_cache():
 
 
 def _load_external_index_subprocess_module():
+    sys.modules["comfy.model_management"].processing_interrupted.return_value = False
     path = REPO_ROOT / "engines" / "index_tts" / "external_subprocess.py"
     assert path.is_file(), "plugin-owned external IndexTTS subprocess adapter is missing"
     spec = importlib.util.spec_from_file_location("external_index_subprocess_test", path)
@@ -667,6 +668,131 @@ def _load_external_index_subprocess_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def test_external_wait_returns_output_without_interrupt(monkeypatch):
+    module = _load_external_index_subprocess_module()
+    proxy = object.__new__(module.ExternalIndexTTSSubprocessProxy)
+    proxy.timeout_seconds = 1.0
+    proxy.termination_grace_seconds = 0.2
+    proxy.interrupt_check = lambda: False
+
+    class Finished:
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return "ok", ""
+
+    assert proxy._communicate_with_control(Finished(), "IndexTTS") == ("ok", "")
+
+
+def test_external_wait_interrupts_and_cleans_tree(monkeypatch):
+    module = _load_external_index_subprocess_module()
+    proxy = object.__new__(module.ExternalIndexTTSSubprocessProxy)
+    proxy.timeout_seconds = 10.0
+    proxy.termination_grace_seconds = 0.2
+    checks = iter((False, True))
+    proxy.interrupt_check = lambda: next(checks, True)
+    cleaned = []
+
+    class Running:
+        returncode = None
+
+        def communicate(self, timeout=None):
+            raise module.subprocess.TimeoutExpired("runner", timeout)
+
+        def poll(self):
+            return self.returncode
+
+    def cleanup(process):
+        process.returncode = -9
+        cleaned.append(process)
+        return "partial", "", "tree exited", True
+
+    monkeypatch.setattr(proxy, "_cleanup_timed_out_process", cleanup)
+    process = Running()
+    with pytest.raises(InterruptedError, match="IndexTTS external subprocess interrupted"):
+        proxy._communicate_with_control(process, "IndexTTS")
+    assert cleaned == [process]
+
+
+def test_external_wait_reports_cleanup_failure_instead_of_false_interrupt_success(monkeypatch):
+    module = _load_external_index_subprocess_module()
+    proxy = object.__new__(module.ExternalIndexTTSSubprocessProxy)
+    proxy.timeout_seconds = 10.0
+    proxy.termination_grace_seconds = 0.01
+    proxy.interrupt_check = lambda: True
+
+    class Stuck:
+        returncode = None
+
+        def communicate(self, timeout=None):
+            raise module.subprocess.TimeoutExpired("runner", timeout)
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(
+        proxy,
+        "_cleanup_timed_out_process",
+        lambda process: ("", "", "process exit could not be verified", False),
+    )
+    with pytest.raises(RuntimeError, match="interruption cleanup failed"):
+        proxy._communicate_with_control(Stuck(), "IndexTTS")
+
+
+def test_external_wait_rejects_unverified_tree_when_windows_job_close_fails(monkeypatch):
+    module = _load_external_index_subprocess_module()
+    proxy = object.__new__(module.ExternalIndexTTSSubprocessProxy)
+    proxy.timeout_seconds = 10.0
+    proxy.termination_grace_seconds = 0.2
+    proxy.interrupt_check = lambda: True
+
+    class ExitedParent:
+        pid = 5252
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        @staticmethod
+        def communicate(timeout=None):
+            return "", ""
+
+    process = ExitedParent()
+
+    class BrokenJob:
+        def close(self):
+            process.returncode = -9
+            raise OSError("job handle close failed")
+
+    process._tts_windows_job = BrokenJob()
+    monkeypatch.setattr(module.os, "name", "nt")
+
+    with pytest.raises(RuntimeError, match="interruption cleanup failed"):
+        proxy._communicate_with_control(process, "IndexTTS")
+
+
+def test_external_wait_preserves_timeout_category(monkeypatch):
+    module = _load_external_index_subprocess_module()
+    proxy = object.__new__(module.ExternalIndexTTSSubprocessProxy)
+    proxy.timeout_seconds = 0.01
+    proxy.termination_grace_seconds = 0.2
+    proxy.interrupt_check = lambda: False
+
+    class Running:
+        returncode = None
+
+        def communicate(self, timeout=None):
+            raise module.subprocess.TimeoutExpired("runner", timeout)
+
+    monkeypatch.setattr(
+        proxy,
+        "_cleanup_timed_out_process",
+        lambda process: ("", "slow", "tree exited", True),
+    )
+    with pytest.raises(TimeoutError, match="exceeded 0.01s"):
+        proxy._communicate_with_control(Running(), "IndexTTS")
 
 
 def _prepare_external_index_runtime(tmp_path):
@@ -824,7 +950,7 @@ def test_external_gpt_subprocess_preserves_registered_lineage_offline_and_cleans
     assert observed["command"][0] == str(python_executable)
     assert Path(observed["command"][1]).name == "external_subprocess_runner.py"
     assert observed["kwargs"]["cwd"] == str(source_root)
-    assert observed["timeout"] == 321.0
+    assert 0 < observed["timeout"] <= 0.25
     child_environment = observed["kwargs"]["env"]
     assert child_environment["TTS_AUDIO_SUITE_OFFLINE"] == "1"
     assert child_environment["HF_HUB_OFFLINE"] == "1"
@@ -1010,6 +1136,171 @@ def _prepare_external_cosyvoice_runtime(tmp_path):
     return source_root, model_dir, python_executable, voice_path, temp_root
 
 
+def _assert_registered_engine_interrupts_during_sliced_wait(
+    monkeypatch,
+    module,
+    proxy,
+    invoke_real_engine,
+    temp_root,
+    engine_label,
+):
+    """Exercise the registered public call while its runner is still active."""
+    communicate_timeouts = []
+    created_processes = []
+    terminated_processes = []
+
+    class RunningProcess:
+        returncode = None
+
+        def __init__(self, command, **kwargs):
+            del command, kwargs
+            created_processes.append(self)
+
+        def communicate(self, timeout=None):
+            communicate_timeouts.append(timeout)
+            if self.returncode is None:
+                raise module.subprocess.TimeoutExpired("runner", timeout)
+            return "", ""
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    def terminate_process_tree(process, grace_seconds):
+        del grace_seconds
+        terminated_processes.append(process)
+        process.returncode = -9
+        return "runner tree terminated"
+
+    monkeypatch.setattr(module.subprocess, "Popen", RunningProcess)
+    monkeypatch.setattr(
+        type(proxy),
+        "_terminate_process_tree",
+        staticmethod(terminate_process_tree),
+    )
+
+    with pytest.raises(InterruptedError, match=engine_label):
+        invoke_real_engine(proxy)
+
+    assert communicate_timeouts
+    assert all(0 < timeout <= 0.25 for timeout in communicate_timeouts)
+    assert len(created_processes) == 1
+    assert terminated_processes == [created_processes[0]]
+    assert created_processes[0].returncode == -9
+    assert not list(temp_root.iterdir())
+
+
+@pytest.mark.unit
+def test_registered_index_interrupts_during_sliced_wait(monkeypatch, tmp_path):
+    module = _load_external_index_subprocess_module()
+    source_root, model_dir, _, voice_path, temp_root = _prepare_external_index_runtime(tmp_path)
+    checks = iter((False, True))
+    proxy = module.ExternalIndexTTSSubprocessProxy(
+        source_root=source_root,
+        model_dir=model_dir,
+        device="cuda:0",
+        use_fp16=True,
+        timeout_seconds=321.0,
+        termination_grace_seconds=0.2,
+        temp_root=temp_root,
+        interrupt_check=lambda: next(checks, True),
+    )
+
+    _assert_registered_engine_interrupts_during_sliced_wait(
+        monkeypatch,
+        module,
+        proxy,
+        lambda engine: engine.infer(
+            spk_audio_prompt=str(voice_path),
+            text="interrupt the external runner",
+            output_path=None,
+        ),
+        temp_root,
+        "IndexTTS",
+    )
+
+
+@pytest.mark.unit
+def test_registered_gpt_sovits_interrupts_during_sliced_wait(monkeypatch, tmp_path):
+    module = _load_external_gpt_subprocess_module()
+    (
+        source_root,
+        python_executable,
+        gpt_weight,
+        sovits_weight,
+        bert_path,
+        cnhubert_path,
+        voice_path,
+        temp_root,
+    ) = _prepare_external_gpt_runtime(tmp_path)
+    checks = iter((False, True))
+    proxy = module.ExternalGPTSovitsSubprocessProxy(
+        source_root=source_root,
+        gpt_weight=gpt_weight,
+        sovits_weight=sovits_weight,
+        bert_path=bert_path,
+        cnhubert_path=cnhubert_path,
+        device="cuda",
+        use_fp16=True,
+        version="v2",
+        python_executable=python_executable,
+        timeout_seconds=321.0,
+        termination_grace_seconds=0.2,
+        temp_root=temp_root,
+        interrupt_check=lambda: next(checks, True),
+    )
+
+    _assert_registered_engine_interrupts_during_sliced_wait(
+        monkeypatch,
+        module,
+        proxy,
+        lambda engine: engine.run(
+            {
+                "text": "interrupt the external runner",
+                "text_lang": "en",
+                "ref_audio_path": str(voice_path),
+                "prompt_text": "reference",
+                "prompt_lang": "en",
+            }
+        ),
+        temp_root,
+        "GPT-SoVITS",
+    )
+
+
+@pytest.mark.unit
+def test_registered_cosyvoice_interrupts_during_sliced_wait(monkeypatch, tmp_path):
+    module = _load_external_cosyvoice_subprocess_module()
+    source_root, model_dir, _, voice_path, temp_root = _prepare_external_cosyvoice_runtime(tmp_path)
+    checks = iter((False, True))
+    proxy = module.ExternalCosyVoiceSubprocessProxy(
+        source_root=source_root,
+        model_dir=model_dir,
+        device="cuda",
+        use_fp16=True,
+        timeout_seconds=321.0,
+        termination_grace_seconds=0.2,
+        temp_root=temp_root,
+        interrupt_check=lambda: next(checks, True),
+    )
+
+    _assert_registered_engine_interrupts_during_sliced_wait(
+        monkeypatch,
+        module,
+        proxy,
+        lambda engine: list(
+            engine.inference_cross_lingual(
+                tts_text="interrupt the external runner",
+                prompt_wav=str(voice_path),
+            )
+        ),
+        temp_root,
+        "CosyVoice",
+    )
+
+
 @pytest.mark.unit
 def test_external_cosyvoice_subprocess_uses_checkout_venv_offline_and_cleans_temp(monkeypatch, tmp_path):
     module = _load_external_cosyvoice_subprocess_module()
@@ -1058,7 +1349,7 @@ def test_external_cosyvoice_subprocess_uses_checkout_venv_offline_and_cleans_tem
     assert observed["command"][0] == str(python_executable)
     assert Path(observed["command"][1]).name == "external_subprocess_runner.py"
     assert observed["kwargs"]["cwd"] == str(source_root)
-    assert observed["timeout"] == 321.0
+    assert 0 < observed["timeout"] <= 0.25
     child_environment = observed["kwargs"]["env"]
     assert child_environment["TTS_AUDIO_SUITE_OFFLINE"] == "1"
     assert child_environment["HF_HUB_OFFLINE"] == "1"
@@ -1228,7 +1519,7 @@ def test_external_index_subprocess_uses_checkout_venv_and_cleans_temp(monkeypatc
     assert observed["command"][0] == str(python_executable)
     assert Path(observed["command"][1]).name == "external_subprocess_runner.py"
     assert observed["kwargs"]["cwd"] == str(source_root)
-    assert observed["timeout"] == 321.0
+    assert observed["timeout"] == 0.25
     child_environment = observed["kwargs"]["env"]
     assert child_environment["PYTHONDONTWRITEBYTECODE"] == "1"
     pycache_prefix = Path(child_environment["PYTHONPYCACHEPREFIX"])
@@ -1290,7 +1581,7 @@ def test_external_index_subprocess_terminates_tree_on_timeout_and_cleans_temp(mo
 
         def communicate(self, timeout=None):
             self.calls += 1
-            if self.calls == 1:
+            if self.returncode is None:
                 raise module.subprocess.TimeoutExpired("indextts", timeout)
             return ("", "child stopped")
 
@@ -1346,7 +1637,7 @@ def test_external_index_timeout_falls_back_to_direct_kill_when_tree_kill_fails(m
 
         def communicate(self, timeout=None):
             self.timeouts.append(timeout)
-            if len(self.timeouts) == 1:
+            if self.returncode is None:
                 raise module.subprocess.TimeoutExpired("indextts", timeout)
             return ("", "direct child stopped")
 
@@ -1379,8 +1670,8 @@ def test_external_index_timeout_falls_back_to_direct_kill_when_tree_kill_fails(m
     assert "exceeded 0.5s" in str(error.value)
     assert "taskkill denied" in str(error.value)
     assert instances[0].kill_calls == 1
-    assert instances[0].timeouts[0] == 0.5
-    assert 0 < instances[0].timeouts[1] <= 0.21
+    assert 0 < instances[0].timeouts[0] <= 0.25
+    assert 0 < instances[0].timeouts[-1] <= 0.21
     assert not list(temp_root.iterdir())
 
 
@@ -1431,8 +1722,8 @@ def test_external_index_timeout_cleanup_remains_bounded_when_process_will_not_ex
     assert "direct kill denied" in str(error.value)
     assert "cleanup communicate exceeded remaining" in str(error.value)
     assert "of 0.2s grace" in str(error.value)
-    assert instances[0].timeouts[0] == 0.5
-    assert 0 < instances[0].timeouts[1] <= 0.21
+    assert 0 < instances[0].timeouts[0] <= 0.25
+    assert 0 < instances[0].timeouts[-1] <= 0.21
     assert not list(temp_root.iterdir())
 
 
@@ -1450,9 +1741,7 @@ def test_external_index_timeout_reports_when_cleanup_cannot_verify_process_exit(
 
         def communicate(self, timeout=None):
             self.calls += 1
-            if self.calls == 1:
-                raise module.subprocess.TimeoutExpired("indextts", timeout)
-            return ("", "")
+            raise module.subprocess.TimeoutExpired("indextts", timeout)
 
         def poll(self):
             return None
@@ -1963,7 +2252,7 @@ def test_external_index_primary_error_survives_temporary_cleanup_failure(
 
         def communicate(self, timeout=None):
             self.calls += 1
-            if should_timeout and self.calls == 1:
+            if should_timeout:
                 raise module.subprocess.TimeoutExpired("indextts", timeout)
             return "", "official inference exploded"
 
@@ -2027,6 +2316,28 @@ def test_index_engine_uses_external_subprocess_for_registered_checkout(monkeypat
     assert created["model_dir"] == str(model_dir)
     assert str(created["device"]).startswith("cuda")
     assert created["use_fp16"] is True
+
+
+@pytest.mark.unit
+def test_index_engine_preserves_complete_explicit_model_directory(monkeypatch, tmp_path):
+    import engines.index_tts.index_tts as engine_module
+
+    source_root = tmp_path / "source"
+    model_dir = tmp_path / "model"
+    source_root.mkdir()
+    model_dir.mkdir()
+    (model_dir / "config.yaml").write_text("model: local\n", encoding="utf-8")
+
+    class FakeExternalProxy:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(engine_module, "ExternalIndexTTSSubprocessProxy", FakeExternalProxy, raising=False)
+    engine = engine_module.IndexTTSEngine(
+        model_dir=str(model_dir), source_root=str(source_root), device="cpu", use_fp16=False
+    )
+
+    assert engine.model_dir == str(model_dir)
 
 
 @pytest.mark.unit

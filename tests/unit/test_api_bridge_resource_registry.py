@@ -196,6 +196,28 @@ def test_registry_resolves_private_gpt_interpreter_without_capability_leakage(tm
     assert "python_executable" not in capabilities[0]
 
 
+def test_registry_resolves_optional_gpt_speaker_encoder_checkpoint(tmp_path: Path):
+    source = tmp_path / "gpt"
+    source.mkdir()
+    gpt_weight = source / "voice.ckpt"
+    sovits_weight = source / "voice.pth"
+    sv_path = tmp_path / "portable" / "pretrained_eres2net.ckpt"
+    sv_path.parent.mkdir()
+    for path in (gpt_weight, sovits_weight, sv_path):
+        path.write_bytes(b"local")
+    config = tmp_path / "resources.yaml"
+    config.write_text(
+        "version: 1\nresources:\n  local-gpt:\n"
+        f"    engine: gpt_sovits\n    source_root: '{source.as_posix()}'\n"
+        f"    gpt_weight: '{gpt_weight.as_posix()}'\n"
+        f"    sovits_weight: '{sovits_weight.as_posix()}'\n"
+        f"    sv_path: '{sv_path.as_posix()}'\n",
+        encoding="utf-8",
+    )
+
+    assert ResourceRegistry.load(config).require("local-gpt", "gpt_sovits").sv_path == sv_path.resolve()
+
+
 def test_registry_rejects_missing_private_gpt_interpreter(tmp_path: Path):
     source = tmp_path / "gpt"
     source.mkdir()

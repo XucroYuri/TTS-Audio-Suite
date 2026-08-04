@@ -10,7 +10,22 @@ from typing import Dict, List
 
 import folder_paths
 import numpy as np
-from scipy.io import wavfile
+try:
+    from scipy.io import wavfile
+except Exception as scipy_error:
+    # SciPy wheels are not available on every supported Python/ComfyUI
+    # combination (notably some Python 3.13 images). Keep this lightweight
+    # staging node registerable and use the suite's soundfile dependency for
+    # the same PCM WAV write contract.
+    import soundfile as _soundfile
+
+    class _SoundfileWavfile:
+        @staticmethod
+        def write(path, sample_rate, data):
+            _soundfile.write(path, data, sample_rate, format="WAV", subtype="FLOAT")
+
+    wavfile = _SoundfileWavfile()
+    print(f"⚠️ MOSS Clip Staging: SciPy wavfile unavailable, using soundfile fallback: {scipy_error}")
 
 current_dir = os.path.dirname(__file__)
 nodes_dir = os.path.dirname(current_dir)

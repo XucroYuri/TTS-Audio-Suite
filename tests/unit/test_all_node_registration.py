@@ -129,6 +129,24 @@ def test_plugin_loader_probe_keeps_the_parent_process_unchanged():
 
 
 @pytest.mark.unit
+def test_plugin_loader_probe_preserves_an_existing_child_numpy_bool_alias():
+    result = subprocess.run(
+        [sys.executable, str(Path(__file__).resolve()), "--probe"],
+        cwd=REPO_ROOT,
+        env={**os.environ, "COMFYUI_TESTING": "1"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout)
+    assert "MossClipStagingNode" in payload["node_ids"]
+    assert payload["numpy_bool_alias_available"] is True
+    assert payload["existing_numpy_bool_alias_preserved"] is True
+
+
+@pytest.mark.unit
 def test_plugin_loader_probe_cleans_up_its_temporary_directories(tmp_path: Path):
     temporary_root = tmp_path / "probe-temp"
     temporary_root.mkdir()
@@ -210,19 +228,6 @@ def _install_optional_dependency_stubs():
     sys.modules["audio_separator"] = audio_separator
     sys.modules["audio_separator.separator"] = audio_separator_separator
 
-    scipy = types.ModuleType("scipy")
-    scipy.__spec__ = importlib.machinery.ModuleSpec("scipy", loader=None)
-    scipy_io = types.ModuleType("scipy.io")
-    scipy_io.__spec__ = importlib.machinery.ModuleSpec("scipy.io", loader=None)
-    scipy_wavfile = types.ModuleType("scipy.io.wavfile")
-    scipy_wavfile.__spec__ = importlib.machinery.ModuleSpec("scipy.io.wavfile", loader=None)
-    scipy_wavfile.write = lambda *args, **kwargs: None
-    scipy_io.wavfile = scipy_wavfile
-    scipy.io = scipy_io
-    sys.modules["scipy"] = scipy
-    sys.modules["scipy.io"] = scipy_io
-    sys.modules["scipy.io.wavfile"] = scipy_wavfile
-
     rvc_audio = types.ModuleType("rvc_audio")
     rvc_audio.audio_to_bytes = lambda *args, **kwargs: b""
     rvc_audio.save_input_audio = lambda *args, **kwargs: None
@@ -273,13 +278,23 @@ def _probe_node_ids():
 
 def _run_probe():
     logs = io.StringIO()
+    import numpy as np
+
+    numpy_bool_was_present = "bool" in np.__dict__
+    numpy_bool_before = np.__dict__.get("bool")
     try:
         with redirect_stdout(logs), redirect_stderr(logs):
             node_ids = _probe_node_ids()
     except Exception:
         print(f"{traceback.format_exc()}Captured loader logs:\n{logs.getvalue()}", file=sys.stderr)
         return 1
-    print(json.dumps({"node_ids": node_ids}))
+    print(json.dumps({
+        "node_ids": node_ids,
+        "numpy_bool_alias_available": "bool" in np.__dict__,
+        "existing_numpy_bool_alias_preserved": (
+            not numpy_bool_was_present or np.__dict__.get("bool") is numpy_bool_before
+        ),
+    }))
     return 0
 
 

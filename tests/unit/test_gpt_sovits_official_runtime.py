@@ -2,12 +2,14 @@ import importlib.util
 from pathlib import Path
 import os
 import sys
+from types import SimpleNamespace
 
 import pytest
 import torch
 
 from engines.adapters.gpt_sovits_adapter import GPTSovitsAdapter
 from engines.gpt_sovits import runtime as runtime_module
+from engines.gpt_sovits.external_subprocess_runner import _configure_official_speaker_encoder
 from utils.audio.cache import AudioCache
 
 
@@ -70,6 +72,17 @@ def test_gpt_sovits_cache_key_covers_every_generation_input():
     }.items():
         changed = {**base, name: value}
         assert cache.generate_cache_key("gpt_sovits", **changed) != base_key, name
+
+
+def test_official_runner_can_bind_cwd_relative_speaker_encoder_to_registered_path(tmp_path, monkeypatch):
+    speaker_encoder = tmp_path / "pretrained_eres2net.ckpt"
+    speaker_encoder.write_bytes(b"checkpoint")
+    module = SimpleNamespace(sv_path="relative/path.ckpt")
+    monkeypatch.setitem(sys.modules, "sv", module)
+
+    _configure_official_speaker_encoder(str(speaker_encoder))
+
+    assert module.sv_path == str(speaker_encoder.resolve())
 
 
 def test_native_engine_resolves_home_weights_when_comfy_directory_is_empty(tmp_path):
