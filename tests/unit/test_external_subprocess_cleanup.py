@@ -42,6 +42,84 @@ def test_windows_cleanup_retries_file_not_found_race(monkeypatch, tmp_path):
 
 
 @pytest.mark.unit
+def test_windows_cleanup_rechecks_successful_cleanup_before_returning(
+    monkeypatch, tmp_path
+):
+    """A swallowed WinError 145 must not make a still-present child look clean."""
+    module = _load_external_index_subprocess_module()
+    temporary_path = tmp_path / "private-child"
+    temporary_path.mkdir()
+    (temporary_path / "late-numba-cache").write_bytes(b"cache")
+
+    class QuietTemporaryDirectory:
+        def cleanup(self):
+            # ``TemporaryDirectory`` may swallow a transient directory-not-empty
+            # callback error and return while its directory is still present.
+            return None
+
+    real_rmtree = module.shutil.rmtree
+    attempts = 0
+
+    def retrying_rmtree(path):
+        nonlocal attempts
+        attempts += 1
+        return real_rmtree(path)
+
+    monkeypatch.setattr(module.os, "name", "nt")
+    monkeypatch.setattr(module.shutil, "rmtree", retrying_rmtree)
+    module._cleanup_temporary_directory(QuietTemporaryDirectory(), temporary_path)
+
+    assert attempts == 1
+    assert not temporary_path.exists()
+
+
+@pytest.mark.unit
+def test_windows_cleanup_keeps_successful_residue_fail_closed(
+    monkeypatch, tmp_path
+):
+    module = _load_external_index_subprocess_module()
+    temporary_path = tmp_path / "private-child"
+    temporary_path.mkdir()
+    sentinel_path = temporary_path / "sentinel"
+    sentinel_path.write_bytes(b"keep")
+
+    class FakeClock:
+        def __init__(self):
+            self.value = 0.0
+
+        def monotonic(self):
+            self.value += 1.0
+            return self.value
+
+        @staticmethod
+        def sleep(_seconds):
+            return None
+
+    class QuietTemporaryDirectory:
+        def cleanup(self):
+            return None
+
+    attempts = 0
+
+    def persistent_rmtree(_path):
+        nonlocal attempts
+        attempts += 1
+        error = OSError(145, "directory not empty")
+        error.winerror = 145
+        raise error
+
+    monkeypatch.setattr(module.os, "name", "nt")
+    monkeypatch.setattr(module, "time", FakeClock())
+    monkeypatch.setattr(module.shutil, "rmtree", persistent_rmtree)
+    with pytest.raises(OSError, match="directory not empty"):
+        module._cleanup_temporary_directory(QuietTemporaryDirectory(), temporary_path)
+
+    assert attempts == int(module._WINDOWS_DIRECTORY_NOT_EMPTY_RETRY_SECONDS)
+    assert temporary_path.exists()
+    assert sentinel_path.read_bytes() == b"keep"
+
+
+@pytest.mark.unit
 def test_windows_cleanup_keeps_non_transient_error_fail_closed(monkeypatch, tmp_path):
     module = _load_external_index_subprocess_module()
     temporary_path = tmp_path / "private-child"
