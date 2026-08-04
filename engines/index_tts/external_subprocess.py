@@ -88,7 +88,7 @@ def _rmtree_onerror(function, path, error_info) -> None:
     raise error.with_traceback(error_info[2])
 
 
-def _rmtree_with_missing_child_tolerance(path: Path) -> None:
+def _rmtree_with_missing_child_tolerance(path: str | Path) -> None:
     """Use the available rmtree callback API without hiding real failures."""
     try:
         parameters = inspect.signature(shutil.rmtree).parameters
@@ -119,13 +119,20 @@ def _cleanup_temporary_directory(temporary_directory, temporary_path: Path) -> N
         if error_number == 145
         else _WINDOWS_CLEANUP_RETRY_SECONDS
     )
+    # The temporary root itself can be short while a nested Numba cache path
+    # exceeds MAX_PATH.  Keep the private root identity unchanged, but use an
+    # extended-length path for every retry walk so shutil can reach those
+    # nested entries on Windows.
+    cleanup_target: str | Path = (
+        _private_child_path(temporary_path) if os.name == "nt" else temporary_path
+    )
     deadline = time.monotonic() + retry_seconds
     delay = 0.05
     while True:
         try:
             if not temporary_path.exists():
                 return
-            _rmtree_with_missing_child_tolerance(temporary_path)
+            _rmtree_with_missing_child_tolerance(cleanup_target)
             # Give a late Numba writer one short quiescence interval before
             # declaring the private directory gone.
             time.sleep(0.05)

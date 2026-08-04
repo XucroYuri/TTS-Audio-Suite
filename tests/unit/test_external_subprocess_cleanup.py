@@ -239,3 +239,47 @@ def test_windows_cleanup_rejects_persistent_directory_not_empty_race(
     assert attempts == int(module._WINDOWS_DIRECTORY_NOT_EMPTY_RETRY_SECONDS)
     assert temporary_path.exists()
     assert (temporary_path / "sentinel").read_bytes() == b"keep"
+
+
+@pytest.mark.unit
+def test_windows_cleanup_retries_long_nested_paths_with_extended_prefix(
+    monkeypatch, tmp_path
+):
+    module = _load_external_index_subprocess_module()
+    long_raw_path = str(tmp_path) + ("\\" + ("cache-" + "x" * 32)) * 8 + "\\runner"
+
+    class LongTemporaryPath:
+        def __init__(self, raw_path):
+            self.raw_path = raw_path
+            self.exists_calls = 0
+
+        def __fspath__(self):
+            return self.raw_path
+
+        def exists(self):
+            self.exists_calls += 1
+            return self.exists_calls == 1
+
+    temporary_path = LongTemporaryPath(long_raw_path)
+
+    class RacingTemporaryDirectory:
+        def cleanup(self):
+            error = OSError(145, "directory not empty")
+            error.winerror = 145
+            raise error
+
+    captured_paths = []
+
+    def capture_rmtree(path):
+        captured_paths.append(path)
+
+    monkeypatch.setattr(module.os, "name", "nt")
+    monkeypatch.setattr(module.shutil, "rmtree", capture_rmtree)
+    module._cleanup_temporary_directory(RacingTemporaryDirectory(), temporary_path)
+
+    assert len(long_raw_path) > 260
+    assert len(captured_paths) == 1
+    assert isinstance(captured_paths[0], str)
+    assert captured_paths[0].startswith("\\\\?\\")
+    assert len(captured_paths[0]) > 260
+    assert captured_paths[0] == module._private_child_path(long_raw_path)
