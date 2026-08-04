@@ -120,6 +120,12 @@ def test_gpt_child_cache_directories_exist_before_start_and_are_private(monkeypa
                 assert cache_path.is_relative_to(temp_root.resolve())
                 if os.name == "nt":
                     assert environment[variable].startswith("\\\\?\\")
+            for variable in ("TEMP", "TMP"):
+                temp_path = _path_without_windows_extended_prefix(environment[variable])
+                assert temp_path.is_dir(), f"{variable} missing before child start"
+                assert temp_path.is_relative_to(temp_root.resolve())
+                if os.name == "nt":
+                    assert environment[variable].startswith("\\\\?\\")
             assert not (temp_root.parent / "numba-cache").exists()
 
         def communicate(self, timeout):

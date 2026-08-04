@@ -6,6 +6,7 @@ from collections import deque
 from collections.abc import Callable
 import ctypes
 from ctypes import wintypes
+import hashlib
 import inspect
 import json
 import os
@@ -13,6 +14,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import stat
 import sys
 import tempfile
 import time
@@ -54,6 +56,103 @@ def _private_child_path(path: str | Path) -> str:
     if absolute.startswith("\\\\"):
         return "\\\\?\\UNC\\" + absolute[2:]
     return "\\\\?\\" + absolute
+
+
+def _set_private_temp_environment(
+    environment: dict[str, str], temporary_path: str | Path
+) -> None:
+    """Route every child temp alias into its own private run directory.
+
+    Windows environment names are case-insensitive, but a copied Python
+    mapping is not.  Remove inherited case variants first so a child cannot
+    accidentally keep writing to the host or runner-level TEMP/TMP path.
+    """
+    for key in tuple(environment):
+        if key.upper() in {"TEMP", "TMP"}:
+            del environment[key]
+    private_root = _private_child_path(temporary_path)
+    environment["TEMP"] = private_root
+    environment["TMP"] = private_root
+
+
+def _temporary_residue_fingerprint(path: str | Path) -> str:
+    """Return a path-free, hash-only summary of a leftover child directory.
+
+    The relative entry names and metadata are included in the digest, but are
+    never returned.  This keeps cleanup diagnostics useful for correlating a
+    residue shape without disclosing checkout, user, or model paths.
+    """
+    root = Path(path)
+    records: list[tuple[str, str, int]] = []
+    total_bytes = 0
+    scan_errors = 0
+    pending = [root]
+    while pending:
+        current = pending.pop()
+        try:
+            entries = list(os.scandir(current))
+        except OSError:
+            scan_errors += 1
+            continue
+        for entry in entries:
+            try:
+                entry_stat = entry.stat(follow_symlinks=False)
+                is_reparse = bool(
+                    getattr(entry_stat, "st_file_attributes", 0)
+                    & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+                )
+                if entry.is_symlink() or is_reparse:
+                    kind = "reparse"
+                    size = 0
+                elif stat.S_ISDIR(entry_stat.st_mode):
+                    kind = "dir"
+                    size = 0
+                elif stat.S_ISREG(entry_stat.st_mode):
+                    kind = "file"
+                    size = int(entry_stat.st_size)
+                else:
+                    kind = "other"
+                    size = 0
+            except OSError:
+                scan_errors += 1
+                continue
+            relative = os.path.relpath(entry.path, root).replace(os.sep, "/")
+            records.append((relative, kind, size))
+            total_bytes += size
+            if kind == "dir":
+                pending.append(Path(entry.path))
+    records.sort()
+    payload = json.dumps(records, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    digest = hashlib.sha256(payload).hexdigest()
+    return (
+        f"entries={len(records)};bytes={total_bytes};scan_errors={scan_errors};"
+        f"sha256={digest}"
+    )
+
+
+def _cleanup_error_summary(error: BaseException) -> str:
+    """Keep cleanup diagnostics informative without returning absolute paths."""
+    message = getattr(error, "strerror", None)
+    if message:
+        message = str(message)
+        if "/" not in message and "\\" not in message:
+            return message
+    arguments = getattr(error, "args", ())
+    if len(arguments) == 1 and isinstance(arguments[0], str):
+        candidate = arguments[0]
+        if "/" not in candidate and "\\" not in candidate:
+            return candidate
+    error_number = _windows_error_number(error)
+    if error_number is not None:
+        return f"winerror={error_number}"
+    return type(error).__name__
+
+
+def _temporary_cleanup_diagnostic(error: BaseException, path: str | Path) -> str:
+    return (
+        f"temporary directory cleanup failed: {_cleanup_error_summary(error)}; "
+        f"residue={_temporary_residue_fingerprint(path)}"
+    )
 
 
 def _windows_error_number(error: BaseException) -> int | None:
@@ -393,6 +492,7 @@ class ExternalIndexTTSSubprocessProxy:
                     "MPLCONFIGDIR": _private_child_path(temporary_path / "matplotlib"),
                 }
             )
+            _set_private_temp_environment(environment, temporary_path)
             popen_kwargs: dict[str, Any] = {
                 "cwd": str(self.source_root),
                 "env": environment,
@@ -446,7 +546,7 @@ class ExternalIndexTTSSubprocessProxy:
             try:
                 _cleanup_temporary_directory(temporary_directory, temporary_path)
             except Exception as cleanup_error:
-                diagnostic = f"temporary directory cleanup failed: {cleanup_error}"
+                diagnostic = _temporary_cleanup_diagnostic(cleanup_error, temporary_path)
                 if primary_error is None:
                     raise RuntimeError(diagnostic) from cleanup_error
                 primary_error.args = (f"{primary_error}; {diagnostic}",)
