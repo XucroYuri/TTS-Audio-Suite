@@ -43,7 +43,13 @@ _WINDOWS_DIRECTORY_NOT_EMPTY_RETRY_SECONDS = 10.0
 def _private_child_path(path: str | Path) -> str:
     """Return an absolute child-cache path that survives Windows MAX_PATH."""
     absolute = os.path.abspath(os.fspath(path))
-    if os.name != "nt" or absolute.startswith("\\\\?\\"):
+    windows_absolute = (
+        len(absolute) >= 3
+        and absolute[0].isalpha()
+        and absolute[1] == ":"
+        and absolute[2] in "\\/"
+    ) or absolute.startswith("\\\\")
+    if os.name != "nt" or absolute.startswith("\\\\?\\") or not windows_absolute:
         return absolute
     if absolute.startswith("\\\\"):
         return "\\\\?\\UNC\\" + absolute[2:]
