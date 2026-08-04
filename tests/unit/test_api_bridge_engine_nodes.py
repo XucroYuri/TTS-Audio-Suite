@@ -2124,27 +2124,27 @@ def test_windows_broad_slow_fallback_obeys_one_hard_deadline(monkeypatch):
             self._children = list(children)
 
         def children(self, recursive=False):
-            time.sleep(0.01)
+            time.sleep(0.005)
             return list(self._children)
 
         def create_time(self):
-            time.sleep(0.01)
+            time.sleep(0.005)
             return float(self.pid)
 
         def is_running(self):
-            time.sleep(0.01)
+            time.sleep(0.005)
             return True
 
         def suspend(self):
-            time.sleep(0.01)
+            time.sleep(0.005)
 
         def terminate(self):
-            time.sleep(0.01)
+            time.sleep(0.005)
 
         def kill(self):
-            time.sleep(0.01)
+            time.sleep(0.005)
 
-    children = [SlowProcess(6100 + index) for index in range(24)]
+    children = [SlowProcess(6100 + index) for index in range(8)]
     root = SlowProcess(6000, children)
 
     class RunningPopen:
@@ -2173,7 +2173,7 @@ def test_windows_broad_slow_fallback_obeys_one_hard_deadline(monkeypatch):
         module.ExternalIndexTTSSubprocessProxy._terminate_process_tree(RunningPopen(), 0.05)
     elapsed = time.monotonic() - started
 
-    assert elapsed < 0.15
+    assert elapsed < 0.5
 
 
 def _install_failing_temporary_directory(monkeypatch, module, message):

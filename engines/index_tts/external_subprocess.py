@@ -6,6 +6,7 @@ from collections import deque
 from collections.abc import Callable
 import ctypes
 from ctypes import wintypes
+import inspect
 import json
 import os
 from pathlib import Path
@@ -46,6 +47,44 @@ def _private_child_path(path: str | Path) -> str:
     return "\\\\?\\" + absolute
 
 
+def _is_windows_missing_child(error: BaseException) -> bool:
+    if os.name != "nt":
+        return False
+    error_number = getattr(error, "winerror", None)
+    if error_number is None:
+        error_number = getattr(error, "errno", None)
+    return error_number == 3
+
+
+def _rmtree_onexc(function, path, error) -> None:
+    """Ignore only a child that disappeared during the removal walk."""
+    if _is_windows_missing_child(error):
+        return
+    raise error
+
+
+def _rmtree_onerror(function, path, error_info) -> None:
+    """Legacy ``shutil.rmtree`` callback equivalent of :func:`_rmtree_onexc`."""
+    error = error_info[1]
+    if _is_windows_missing_child(error):
+        return
+    raise error.with_traceback(error_info[2])
+
+
+def _rmtree_with_missing_child_tolerance(path: Path) -> None:
+    """Use the available rmtree callback API without hiding real failures."""
+    try:
+        parameters = inspect.signature(shutil.rmtree).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    if "onexc" in parameters:
+        shutil.rmtree(path, onexc=_rmtree_onexc)
+    elif "onerror" in parameters:
+        shutil.rmtree(path, onerror=_rmtree_onerror)
+    else:
+        shutil.rmtree(path)
+
+
 def _cleanup_temporary_directory(temporary_directory, temporary_path: Path) -> None:
     """Remove a child-run directory, retrying only transient Windows races."""
     last_error: OSError | None = None
@@ -66,7 +105,7 @@ def _cleanup_temporary_directory(temporary_directory, temporary_path: Path) -> N
         try:
             if not temporary_path.exists():
                 return
-            shutil.rmtree(temporary_path)
+            _rmtree_with_missing_child_tolerance(temporary_path)
             # Give a late Numba writer one short quiescence interval before
             # declaring the private directory gone.
             time.sleep(0.05)
