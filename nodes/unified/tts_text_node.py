@@ -913,10 +913,11 @@ Back to the main narrator voice for the conclusion.""",
                             self.processor = None
 
                     unload = cleanup
-                    
+
                     def generate_tts_audio(self, text, char_audio, char_text, character="narrator", **params):
                         processor = self._ensure_processor()
-                        
+                        owned_speaker_audio_path = None
+
                         # Get speaker audio info
                         speaker_audio = None
                         if char_audio:
@@ -924,43 +925,67 @@ Back to the main narrator voice for the conclusion.""",
                                 # Save to temp file for CosyVoice
                                 waveform = char_audio['waveform']
                                 sample_rate = char_audio.get('sample_rate', 22050)
-                                speaker_audio = {'audio_path': AudioProcessingUtils.save_audio_to_temp_file(waveform, sample_rate)}
+                                owned_speaker_audio_path = AudioProcessingUtils.save_audio_to_temp_file(
+                                    waveform, sample_rate
+                                )
+                                speaker_audio = {'audio_path': owned_speaker_audio_path}
                             elif isinstance(char_audio, str):
                                 speaker_audio = {'audio_path': char_audio}
-                        
-                        # Update processor's reference text if char_text provided
-                        if char_text:
-                            processor.engine_config['reference_text'] = char_text
-                            processor.reference_text = char_text  # Also update instance attr
-                        
-                        # Generate using processor (includes pause tag support)
-                        audio, generation_info = processor.process_text(
-                            text=text,
-                            speaker_audio=speaker_audio,
-                            seed=params.get('seed', 0),
-                            enable_chunking=params.get('enable_chunking', True),
-                            max_chars_per_chunk=params.get('max_chars_per_chunk', 400),
-                            silence_between_chunks_ms=params.get('silence_between_chunks_ms', 100),
-                            enable_pause_tags=True,  # Always enable pause tags
-                            return_info=True
-                        )
-                        
-                        # Format as ComfyUI audio
-                        # CosyVoice3 outputs 24000 Hz audio (NOT 22050!)
-                        audio_output = {
-                            "waveform": audio.unsqueeze(0) if audio.dim() == 2 else audio,
-                            "sample_rate": 24000  # CosyVoice3 native sample rate
-                        }
-                        
-                        duration = audio.shape[-1] / 24000.0  # Use correct sample rate
-                        mode = self.config.get('mode', 'zero_shot')
-                        info_str = f"✅ CosyVoice3 generation complete ({mode} mode, {duration:.1f}s)"
-                        if generation_info and generation_info.get('pause_tags_processed'):
-                            info_str += " [pause tags processed]"
-                        if generation_info and generation_info.get('chunks_processed', 0) > 1:
-                            info_str += f" [{generation_info['chunks_processed']} chunks]"
-                        
-                        return (audio_output, info_str)
+
+                        primary_error = None
+                        try:
+                            # Update processor's reference text if char_text provided
+                            if char_text:
+                                processor.engine_config['reference_text'] = char_text
+                                processor.reference_text = char_text  # Also update instance attr
+
+                            # Generate using processor (includes pause tag support)
+                            audio, generation_info = processor.process_text(
+                                text=text,
+                                speaker_audio=speaker_audio,
+                                seed=params.get('seed', 0),
+                                enable_chunking=params.get('enable_chunking', True),
+                                max_chars_per_chunk=params.get('max_chars_per_chunk', 400),
+                                silence_between_chunks_ms=params.get('silence_between_chunks_ms', 100),
+                                enable_pause_tags=True,  # Always enable pause tags
+                                return_info=True
+                            )
+
+                            # Format as ComfyUI audio
+                            # CosyVoice3 outputs 24000 Hz audio (NOT 22050!)
+                            audio_output = {
+                                "waveform": audio.unsqueeze(0) if audio.dim() == 2 else audio,
+                                "sample_rate": 24000  # CosyVoice3 native sample rate
+                            }
+
+                            duration = audio.shape[-1] / 24000.0  # Use correct sample rate
+                            mode = self.config.get('mode', 'zero_shot')
+                            info_str = f"✅ CosyVoice3 generation complete ({mode} mode, {duration:.1f}s)"
+                            if generation_info and generation_info.get('pause_tags_processed'):
+                                info_str += " [pause tags processed]"
+                            if generation_info and generation_info.get('chunks_processed', 0) > 1:
+                                info_str += f" [{generation_info['chunks_processed']} chunks]"
+
+                            return (audio_output, info_str)
+                        except BaseException as exc:
+                            primary_error = exc
+                            raise
+                        finally:
+                            if owned_speaker_audio_path:
+                                try:
+                                    os.unlink(owned_speaker_audio_path)
+                                except FileNotFoundError:
+                                    pass
+                                except OSError as cleanup_error:
+                                    diagnostic = (
+                                        "CosyVoice owned prompt temporary-file cleanup failed: "
+                                        f"{type(cleanup_error).__name__}"
+                                    )
+                                    if primary_error is None:
+                                        raise RuntimeError(diagnostic) from cleanup_error
+                                    primary_error.args = (
+                                        f"{primary_error}; {diagnostic}",
+                                    )
                 
                 engine_instance = CosyVoiceWrapper(config)
                 

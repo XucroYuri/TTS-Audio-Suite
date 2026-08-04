@@ -5,7 +5,9 @@ from __future__ import annotations
 import importlib.util
 import io
 from pathlib import Path
+import sys
 import threading
+import types
 import wave
 
 import pytest
@@ -72,6 +74,92 @@ def test_text_target_branches_pin_wrapped_external_voice_through_success_and_err
     with pytest.raises(AssetInUseError): store.delete(asset.asset_id)
     finish.set(); worker.join(timeout=3); assert not worker.is_alive()
     store.delete(asset.asset_id)
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_cosyvoice_waveform_prompt_temp_is_removed_after_success_or_error(
+    tmp_path, monkeypatch, raises
+):
+    """CosyVoice's parent-side prompt WAV is owned by the wrapper call."""
+    module = _load_node("tts_text_node.py", f"cosy_prompt_cleanup_{raises}")
+    prompt_paths: list[Path] = []
+
+    class FakeProcessor:
+        def __init__(self, config):
+            self.engine_config = config
+            self.reference_text = ""
+
+        def process_text(self, **kwargs):
+            if raises:
+                raise RuntimeError("synthetic CosyVoice failure")
+            return torch.ones(1, 32), {}
+
+        def cleanup(self):
+            return None
+
+        def update_config(self, _config):
+            return None
+
+    processor_module = types.SimpleNamespace(CosyVoiceProcessor=FakeProcessor)
+    monkeypatch.setitem(sys.modules, "engines.processors.cosyvoice_processor", processor_module)
+    monkeypatch.setattr(module, "AudioProcessingUtils", type(
+        "FakeAudioProcessingUtils",
+        (),
+        {
+            "save_audio_to_temp_file": staticmethod(
+                lambda _waveform, _sample_rate: _make_prompt_temp_file(tmp_path, prompt_paths)
+            ),
+        },
+    ))
+    monkeypatch.setattr(
+        module,
+        "get_runtime_registry",
+        lambda: type("Registry", (), {"register": lambda *_args, **_kwargs: None})(),
+    )
+    monkeypatch.setattr(module, "make_cache_identity", lambda *_args, **_kwargs: "cosy-test")
+    import utils.device as device_module
+
+    monkeypatch.setattr(device_module, "resolve_torch_device", lambda _device: "cpu")
+    node = module.UnifiedTTSTextNode()
+    monkeypatch.setattr(node, "_register_target_runtime", lambda *_args, **_kwargs: None)
+
+    wrapper = node._create_proper_engine_node_instance(
+        {"engine_type": "cosyvoice", "config": {"resource_id": "resource", "device": "cpu"}}
+    )
+
+    if raises:
+        with pytest.raises(RuntimeError, match="synthetic CosyVoice failure"):
+            wrapper.generate_tts_audio(
+                text="prompt cleanup",
+                char_audio={"waveform": torch.ones(1, 32), "sample_rate": 24000},
+                char_text="",
+            )
+    else:
+        output, _info = wrapper.generate_tts_audio(
+            text="prompt cleanup",
+            char_audio={"waveform": torch.ones(1, 32), "sample_rate": 24000},
+            char_text="",
+        )
+        assert output["waveform"].shape == (1, 1, 32)
+
+        user_prompt = tmp_path / "user-owned.wav"
+        user_prompt.write_bytes(b"user")
+        wrapper.generate_tts_audio(
+            text="user prompt remains",
+            char_audio=str(user_prompt),
+            char_text="",
+        )
+        assert user_prompt.exists()
+
+    assert len(prompt_paths) == 1
+    assert not prompt_paths[0].exists()
+
+
+def _make_prompt_temp_file(tmp_path: Path, prompt_paths: list[Path]) -> str:
+    path = tmp_path / f"cosy-prompt-{len(prompt_paths)}.wav"
+    path.write_bytes(b"prompt")
+    prompt_paths.append(path)
+    return str(path)
 
 
 def _call_text(node, engine_type, config, voice, errors):
