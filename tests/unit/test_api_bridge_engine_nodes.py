@@ -726,6 +726,48 @@ def test_external_wait_interrupts_and_cleans_tree(monkeypatch):
     assert cleaned == [process]
 
 
+def test_external_wait_preserves_comfy_cancellation_after_interrupt_flag_consumed(monkeypatch):
+    module = _load_external_index_subprocess_module()
+    comfy_model_management = sys.modules["comfy.model_management"]
+
+    class ComfyInterrupt(BaseException):
+        pass
+
+    monkeypatch.setattr(
+        comfy_model_management,
+        "InterruptProcessingException",
+        ComfyInterrupt,
+        raising=False,
+    )
+    # Simulate another ComfyUI execution path consuming the global flag while
+    # the external process tree is being terminated.
+    monkeypatch.setattr(
+        comfy_model_management,
+        "throw_exception_if_processing_interrupted",
+        lambda: None,
+        raising=False,
+    )
+
+    proxy = object.__new__(module.ExternalIndexTTSSubprocessProxy)
+    proxy.timeout_seconds = 10.0
+    proxy.termination_grace_seconds = 0.2
+    proxy.interrupt_check = lambda: True
+
+    class Running:
+        returncode = None
+
+        def communicate(self, timeout=None):
+            raise module.subprocess.TimeoutExpired("runner", timeout)
+
+    monkeypatch.setattr(
+        proxy,
+        "_cleanup_timed_out_process",
+        lambda process: ("partial", "", "tree exited", True),
+    )
+    with pytest.raises(ComfyInterrupt):
+        proxy._communicate_with_control(Running(), "IndexTTS")
+
+
 def test_external_wait_reports_cleanup_failure_instead_of_false_interrupt_success(monkeypatch):
     module = _load_external_index_subprocess_module()
     proxy = object.__new__(module.ExternalIndexTTSSubprocessProxy)

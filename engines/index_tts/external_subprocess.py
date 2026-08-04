@@ -273,11 +273,30 @@ def _comfyui_interrupt_requested() -> bool:
 
 def _raise_processing_interrupted(engine_label: str, diagnostic: str) -> None:
     try:
-        from comfy.model_management import throw_exception_if_processing_interrupted
+        from comfy.model_management import (
+            InterruptProcessingException,
+            throw_exception_if_processing_interrupted,
+        )
     except ImportError:
-        pass
+        raise InterruptedError(f"{engine_label} external subprocess interrupted: {diagnostic}")
     else:
-        throw_exception_if_processing_interrupted()
+        try:
+            throw_exception_if_processing_interrupted()
+        except BaseException:
+            # ComfyUI's interruption exception intentionally derives directly
+            # from BaseException, so processor-level ``except Exception``
+            # handlers cannot turn cancellation into a failed generation.
+            raise
+        # The polling callback already observed an interruption before the
+        # process tree was cleaned up.  Cleanup may take long enough for
+        # another execution path to consume ComfyUI's global flag, leaving
+        # throw_exception_if_processing_interrupted() with nothing to raise.
+        # Preserve cancellation semantics in that race instead of falling
+        # through to builtin InterruptedError (which processors wrap).
+        if isinstance(InterruptProcessingException, type) and issubclass(
+            InterruptProcessingException, BaseException
+        ):
+            raise InterruptProcessingException()
     raise InterruptedError(f"{engine_label} external subprocess interrupted: {diagnostic}")
 
 
