@@ -2118,32 +2118,46 @@ def test_windows_job_launch_contains_real_child_created_after_resume(tmp_path):
 def test_windows_broad_slow_fallback_obeys_one_hard_deadline(monkeypatch):
     module = _load_external_index_subprocess_module()
 
+    class FakeClock:
+        """Deterministic monotonic clock for a deadline test."""
+
+        def __init__(self):
+            self.value = 0.0
+
+        def monotonic(self):
+            self.value += 0.001
+            return self.value
+
+        def consume(self, seconds):
+            self.value += seconds
+
     class SlowProcess:
         def __init__(self, pid, children=()):
             self.pid = pid
             self._children = list(children)
 
         def children(self, recursive=False):
-            time.sleep(0.01)
+            clock.consume(0.01)
             return list(self._children)
 
         def create_time(self):
-            time.sleep(0.01)
+            clock.consume(0.01)
             return float(self.pid)
 
         def is_running(self):
-            time.sleep(0.01)
+            clock.consume(0.01)
             return True
 
         def suspend(self):
-            time.sleep(0.01)
+            clock.consume(0.01)
 
         def terminate(self):
-            time.sleep(0.01)
+            clock.consume(0.01)
 
         def kill(self):
-            time.sleep(0.01)
+            clock.consume(0.01)
 
+    clock = FakeClock()
     children = [SlowProcess(6100 + index) for index in range(24)]
     root = SlowProcess(6000, children)
 
@@ -2155,6 +2169,7 @@ def test_windows_broad_slow_fallback_obeys_one_hard_deadline(monkeypatch):
             return None
 
     monkeypatch.setattr(module.os, "name", "nt")
+    monkeypatch.setattr(module, "time", clock)
     monkeypatch.setattr(module.psutil, "Process", lambda pid: root)
     monkeypatch.setattr(module.psutil, "wait_procs", lambda processes, timeout: ([], list(processes)))
     monkeypatch.setattr(
@@ -2168,10 +2183,10 @@ def test_windows_broad_slow_fallback_obeys_one_hard_deadline(monkeypatch):
         ),
     )
 
-    started = time.monotonic()
+    started = clock.monotonic()
     with pytest.raises((RuntimeError, TimeoutError), match="deadline"):
         module.ExternalIndexTTSSubprocessProxy._terminate_process_tree(RunningPopen(), 0.05)
-    elapsed = time.monotonic() - started
+    elapsed = clock.monotonic() - started
 
     assert elapsed < 0.15
 

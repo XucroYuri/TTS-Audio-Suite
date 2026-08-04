@@ -70,6 +70,7 @@ def test_windows_cleanup_rmtree_callback_ignores_disappearing_child(
     module = _load_external_index_subprocess_module()
     temporary_path = tmp_path / "private-child"
     temporary_path.mkdir()
+    late_cache_path = str(temporary_path / "late-numba-cache")
     (temporary_path / "late-numba-cache").write_bytes(b"cache")
 
     class RacingTemporaryDirectory:
@@ -86,7 +87,7 @@ def test_windows_cleanup_rmtree_callback_ignores_disappearing_child(
             assert onexc is not None
             error = OSError(3, "the child disappeared during cleanup")
             error.winerror = 3
-            onexc(os.unlink, str(Path(path) / "late-numba-cache"), error)
+            onexc(os.unlink, late_cache_path, error)
             real_rmtree(path)
 
     else:
@@ -97,7 +98,7 @@ def test_windows_cleanup_rmtree_callback_ignores_disappearing_child(
             error.winerror = 3
             onerror(
                 os.unlink,
-                str(Path(path) / "late-numba-cache"),
+                late_cache_path,
                 (OSError, error, None),
             )
             real_rmtree(path)
@@ -116,6 +117,7 @@ def test_windows_cleanup_rmtree_callback_does_not_swallow_permission_error(
     module = _load_external_index_subprocess_module()
     temporary_path = tmp_path / "private-child"
     temporary_path.mkdir()
+    sentinel_path = str(temporary_path / "sentinel")
     (temporary_path / "sentinel").write_bytes(b"keep")
 
     class BrokenTemporaryDirectory:
@@ -128,7 +130,7 @@ def test_windows_cleanup_rmtree_callback_does_not_swallow_permission_error(
         assert onexc is not None
         error = OSError(5, "access is denied")
         error.winerror = 5
-        onexc(os.unlink, str(Path(path) / "sentinel"), error)
+        onexc(os.unlink, sentinel_path, error)
 
     monkeypatch.setattr(module.os, "name", "nt")
     monkeypatch.setattr(module.shutil, "rmtree", broken_rmtree)
