@@ -28,7 +28,11 @@ _WINDOWS_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 
 InterruptCheck = Callable[[], bool]
 
-_WINDOWS_TRANSIENT_CLEANUP_ERRNOS = frozenset({5, 32, 145})
+# A child can finish a late cache write between TemporaryDirectory.cleanup's
+# initial walk and its removal pass.  WinError 3 is the Windows form of that
+# disappearing-directory race; retry it alongside the existing sharing and
+# non-empty races, while keeping unrelated errors fail-closed.
+_WINDOWS_TRANSIENT_CLEANUP_ERRNOS = frozenset({3, 5, 32, 145})
 _WINDOWS_CLEANUP_RETRY_SECONDS = 3.0
 
 
