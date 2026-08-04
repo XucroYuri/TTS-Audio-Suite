@@ -17,8 +17,10 @@ from engines.index_tts.external_subprocess import (
     ExternalIndexTTSSubprocessProxy,
     InterruptCheck,
     _private_child_path,
+    _set_private_temp_environment,
     _comfyui_interrupt_requested,
     _cleanup_temporary_directory,
+    _temporary_cleanup_diagnostic,
 )
 
 
@@ -234,6 +236,7 @@ class ExternalCosyVoiceSubprocessProxy(ExternalIndexTTSSubprocessProxy):
                     "MPLCONFIGDIR": _private_child_path(temporary_path / "matplotlib"),
                 }
             )
+            _set_private_temp_environment(environment, temporary_path)
             popen_kwargs: dict[str, Any] = {
                 "cwd": str(self.source_root),
                 "env": environment,
@@ -281,7 +284,7 @@ class ExternalCosyVoiceSubprocessProxy(ExternalIndexTTSSubprocessProxy):
             try:
                 _cleanup_temporary_directory(temporary_directory, temporary_path)
             except Exception as cleanup_error:
-                diagnostic = f"temporary directory cleanup failed: {cleanup_error}"
+                diagnostic = _temporary_cleanup_diagnostic(cleanup_error, temporary_path)
                 if primary_error is None:
                     raise RuntimeError(diagnostic) from cleanup_error
                 primary_error.args = (f"{primary_error}; {diagnostic}",)

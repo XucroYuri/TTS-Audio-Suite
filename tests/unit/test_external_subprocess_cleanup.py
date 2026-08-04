@@ -42,6 +42,63 @@ def test_windows_cleanup_retries_file_not_found_race(monkeypatch, tmp_path):
 
 
 @pytest.mark.unit
+def test_private_temp_environment_replaces_inherited_aliases(tmp_path):
+    module = _load_external_index_subprocess_module()
+    private_path = tmp_path / "private-child"
+    private_path.mkdir()
+    environment = {
+        "TEMP": str(tmp_path / "outer-temp"),
+        "temp": str(tmp_path / "outer-temp-lower"),
+        "TMP": str(tmp_path / "outer-tmp"),
+        "Tmp": str(tmp_path / "outer-tmp-mixed"),
+        "UNRELATED": "keep",
+    }
+
+    module._set_private_temp_environment(environment, private_path)
+
+    assert environment["TEMP"] == module._private_child_path(private_path)
+    assert environment["TMP"] == module._private_child_path(private_path)
+    assert {key.upper() for key in environment if key.upper() in {"TEMP", "TMP"}} == {
+        "TEMP",
+        "TMP",
+    }
+    assert environment["UNRELATED"] == "keep"
+
+
+@pytest.mark.unit
+def test_cleanup_failure_diagnostic_is_hash_only(tmp_path):
+    module = _load_external_index_subprocess_module()
+    temporary_path = tmp_path / "private-child"
+    temporary_path.mkdir()
+    (temporary_path / "jieba.cache").write_bytes(b"cache")
+    error = OSError(145, "directory not empty", str(temporary_path))
+    error.winerror = 145
+
+    diagnostic = module._temporary_cleanup_diagnostic(error, temporary_path)
+
+    assert str(temporary_path) not in diagnostic
+    assert "jieba.cache" not in diagnostic
+    assert "directory not empty" in diagnostic
+    assert "residue=entries=1;bytes=5;scan_errors=0;sha256=" in diagnostic
+
+
+@pytest.mark.unit
+def test_cleanup_failure_diagnostic_redacts_pathful_error_text(tmp_path):
+    module = _load_external_index_subprocess_module()
+    temporary_path = tmp_path / "private-child"
+    temporary_path.mkdir()
+    error = OSError(145, "directory not empty")
+    error.strerror = f"directory not empty: {temporary_path}"
+    error.winerror = 145
+
+    diagnostic = module._temporary_cleanup_diagnostic(error, temporary_path)
+
+    assert str(temporary_path) not in diagnostic
+    assert "directory not empty: " not in diagnostic
+    assert "winerror=145" in diagnostic
+
+
+@pytest.mark.unit
 def test_windows_cleanup_rechecks_successful_cleanup_before_returning(
     monkeypatch, tmp_path
 ):

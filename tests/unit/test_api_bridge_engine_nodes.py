@@ -920,6 +920,13 @@ def test_external_gpt_subprocess_preserves_registered_lineage_offline_and_cleans
         def __init__(self, command, **kwargs):
             observed["command"] = command
             observed["kwargs"] = kwargs
+            environment = kwargs["env"]
+            for variable in ("TEMP", "TMP"):
+                private_temp = _path_without_windows_extended_prefix(environment[variable])
+                assert private_temp.is_dir(), f"{variable} missing before child start"
+                assert private_temp.is_relative_to(temp_root.resolve())
+                if os.name == "nt":
+                    assert environment[variable].startswith("\\\\?\\")
 
         def communicate(self, timeout):
             observed["timeout"] = timeout
@@ -1324,6 +1331,13 @@ def test_external_cosyvoice_subprocess_uses_checkout_venv_offline_and_cleans_tem
         def __init__(self, command, **kwargs):
             observed["command"] = command
             observed["kwargs"] = kwargs
+            environment = kwargs["env"]
+            for variable in ("TEMP", "TMP"):
+                private_temp = _path_without_windows_extended_prefix(environment[variable])
+                assert private_temp.is_dir(), f"{variable} missing before child start"
+                assert private_temp.is_relative_to(temp_root.resolve())
+                if os.name == "nt":
+                    assert environment[variable].startswith("\\\\?\\")
 
         def communicate(self, timeout):
             observed["timeout"] = timeout
@@ -1364,6 +1378,11 @@ def test_external_cosyvoice_subprocess_uses_checkout_venv_offline_and_cleans_tem
     assert child_environment["TTS_AUDIO_SUITE_OFFLINE"] == "1"
     assert child_environment["HF_HUB_OFFLINE"] == "1"
     assert child_environment["PYTHONDONTWRITEBYTECODE"] == "1"
+    for variable in ("TEMP", "TMP"):
+        private_temp = _path_without_windows_extended_prefix(child_environment[variable])
+        assert private_temp.is_relative_to(temp_root.resolve())
+        if os.name == "nt":
+            assert child_environment[variable].startswith("\\\\?\\")
     assert observed["manifest"]["mode"] == "cross_lingual"
     assert observed["manifest"]["text"] == "真实外部推理。"
     assert outputs[0]["tts_speech"].shape == (1, 240)
@@ -1496,6 +1515,13 @@ def test_external_index_subprocess_uses_checkout_venv_and_cleans_temp(monkeypatc
         def __init__(self, command, **kwargs):
             observed["command"] = command
             observed["kwargs"] = kwargs
+            environment = kwargs["env"]
+            for variable in ("TEMP", "TMP"):
+                private_temp = _path_without_windows_extended_prefix(environment[variable])
+                assert private_temp.is_dir(), f"{variable} missing before child start"
+                assert private_temp.is_relative_to(temp_root.resolve())
+                if os.name == "nt":
+                    assert environment[variable].startswith("\\\\?\\")
 
         def communicate(self, timeout):
             observed["timeout"] = timeout
@@ -1532,6 +1558,11 @@ def test_external_index_subprocess_uses_checkout_venv_and_cleans_temp(monkeypatc
     assert observed["timeout"] == 0.25
     child_environment = observed["kwargs"]["env"]
     assert child_environment["PYTHONDONTWRITEBYTECODE"] == "1"
+    for variable in ("TEMP", "TMP"):
+        private_temp = _path_without_windows_extended_prefix(child_environment[variable])
+        assert private_temp.is_relative_to(temp_root.resolve())
+        if os.name == "nt":
+            assert child_environment[variable].startswith("\\\\?\\")
     pycache_prefix = _path_without_windows_extended_prefix(child_environment["PYTHONPYCACHEPREFIX"])
     assert pycache_prefix.is_relative_to(temp_root)
     assert not pycache_prefix.is_relative_to(source_root)
