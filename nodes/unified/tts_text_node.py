@@ -57,6 +57,17 @@ from api_bridge.runtime_registry import (
     make_runtime_key,
 )
 
+
+def _is_comfyui_interrupt(error: BaseException) -> bool:
+    """Keep ComfyUI's official cancellation marker out of node fallbacks."""
+    interrupt_exception = getattr(
+        model_management, "InterruptProcessingException", None
+    )
+    return isinstance(interrupt_exception, type) and isinstance(
+        error, interrupt_exception
+    )
+
+
 # Global audio cache for unified TTS segments
 GLOBAL_AUDIO_CACHE = {}
 
@@ -1006,7 +1017,7 @@ Back to the main narrator voice for the conclusion.""",
                 raise ValueError(f"Unknown engine type: {engine_type}")
                 
         except Exception as e:
-            if isinstance(e, InterruptedError):
+            if isinstance(e, InterruptedError) or _is_comfyui_interrupt(e):
                 raise
             if "MOSS LoRA/base model mismatch" in str(e):
                 raise
@@ -1133,7 +1144,7 @@ Back to the main narrator voice for the conclusion.""",
             return None, None, "", "narrator"
             
         except Exception as e:
-            if isinstance(e, InterruptedError):
+            if isinstance(e, InterruptedError) or _is_comfyui_interrupt(e):
                 raise
             print(f"❌ Voice reference error: {e}")
             return None, None, "", "narrator"
@@ -2291,7 +2302,7 @@ Back to the main narrator voice for the conclusion.""",
                 raise
             if engine_type == "gpt_sovits" and config.get("resource_id"):
                 raise
-            if isinstance(e, InterruptedError):
+            if isinstance(e, InterruptedError) or _is_comfyui_interrupt(e):
                 raise
             error_msg = f"❌ TTS Text generation failed: {e}"
             print(error_msg)
