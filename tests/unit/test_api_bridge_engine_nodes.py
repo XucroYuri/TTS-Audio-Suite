@@ -1504,6 +1504,7 @@ def test_external_cosyvoice_subprocess_uses_checkout_venv_offline_and_cleans_tem
         use_fp16=True,
         timeout_seconds=321.0,
         temp_root=temp_root,
+        interrupt_check=lambda: False,
     )
 
     outputs = list(
@@ -1534,6 +1535,93 @@ def test_external_cosyvoice_subprocess_uses_checkout_venv_offline_and_cleans_tem
     assert outputs[0]["tts_speech"].shape == (1, 240)
     assert proxy.sample_rate == 24000
     assert not list(temp_root.iterdir())
+
+
+@pytest.mark.unit
+def test_external_cosyvoice_subprocess_uses_explicit_external_interpreter(monkeypatch, tmp_path):
+    module = _load_external_cosyvoice_subprocess_module()
+    source_root, model_dir, checkout_interpreter, voice_path, temp_root = _prepare_external_cosyvoice_runtime(tmp_path)
+    explicit_interpreter = tmp_path / "isolated-cosyvoice-runtime" / "python.exe"
+    explicit_interpreter.parent.mkdir()
+    explicit_interpreter.touch()
+    observed = {}
+
+    class FakeProcess:
+        pid = 5243
+        returncode = 0
+
+        def __init__(self, command, **kwargs):
+            observed["command"] = command
+
+        def communicate(self, timeout):
+            manifest = json.loads(Path(observed["command"][2]).read_text(encoding="utf-8"))
+            with wave.open(manifest["output_path"], "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(24000)
+                handle.writeframes(b"\x10\x00" * 240)
+            return "", ""
+
+    monkeypatch.setattr(module.subprocess, "Popen", FakeProcess)
+    proxy = module.ExternalCosyVoiceSubprocessProxy(
+        source_root=source_root,
+        model_dir=model_dir,
+        device="cuda",
+        use_fp16=True,
+        python_executable=explicit_interpreter,
+        temp_root=temp_root,
+        interrupt_check=lambda: False,
+    )
+
+    list(proxy.inference_cross_lingual(tts_text="override", prompt_wav=str(voice_path)))
+
+    assert proxy.python_executable == explicit_interpreter.resolve()
+    assert proxy.python_executable != checkout_interpreter.resolve()
+    assert observed["command"][0] == str(explicit_interpreter.resolve())
+
+
+@pytest.mark.unit
+def test_external_cosyvoice_subprocess_rejects_missing_or_directory_explicit_interpreter(tmp_path):
+    module = _load_external_cosyvoice_subprocess_module()
+    source_root, model_dir, _, _, temp_root = _prepare_external_cosyvoice_runtime(tmp_path)
+    missing = tmp_path / "missing-python.exe"
+    directory = tmp_path / "not-an-interpreter"
+    directory.mkdir()
+
+    for interpreter in (missing, directory):
+        with pytest.raises(ValueError, match="CosyVoice python_executable"):
+            module.ExternalCosyVoiceSubprocessProxy(
+                source_root=source_root,
+                model_dir=model_dir,
+                device="cuda",
+                use_fp16=True,
+                python_executable=interpreter,
+                temp_root=temp_root,
+            )
+
+
+@pytest.mark.unit
+def test_external_cosyvoice_engine_node_passes_registered_external_interpreter(monkeypatch, tmp_path):
+    interpreter = tmp_path / "isolated-cosyvoice-runtime" / "python.exe"
+    interpreter.parent.mkdir()
+    interpreter.touch()
+
+    class Registry:
+        def require(self, resource_id, engine):
+            assert (resource_id, engine) == ("local-cosyvoice", "cosyvoice")
+            return TTSResource(
+                resource_id=resource_id,
+                engine=engine,
+                source_root=tmp_path / "cosyvoice-source",
+                model_dir=tmp_path / "cosyvoice-model",
+                python_executable=interpreter.resolve(),
+            )
+
+    monkeypatch.setattr(bridge, "get_resource_registry", lambda: Registry())
+
+    (engine,) = bridge.ExternalCosyVoiceEngineNode().create_engine("local-cosyvoice")
+
+    assert engine["config"]["python_executable"] == str(interpreter.resolve())
 
 
 @pytest.mark.unit
@@ -1639,12 +1727,14 @@ def test_cosyvoice_processor_passes_registered_checkout_to_adapter(monkeypatch):
         {
             "model_path": "C:/cosy/model",
             "cosyvoice_home": "C:/cosy/source",
+            "python_executable": "F:/isolated-cosyvoice/python.exe",
             "device": "cuda",
         }
     )
 
     assert initialized["model_path"] == "C:/cosy/model"
     assert initialized["cosyvoice_home"] == "C:/cosy/source"
+    assert initialized["python_executable"] == "F:/isolated-cosyvoice/python.exe"
 
 
 

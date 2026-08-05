@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 from .models import TTSResource
+from .path_safety import resolve_absolute_regular_file
 
 RESOURCE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 ENGINES = {"gpt_sovits", "index_tts", "cosyvoice"}
@@ -58,6 +59,11 @@ def _build_resource(resource_id: str, raw: dict[str, Any]) -> TTSResource:
     source_root = _resolved(raw, "source_root")
     if source_root is None:
         raise ValueError(f"source_root is required for {resource_id}")
+    python_executable = _resolved(raw, "python_executable")
+    if raw["engine"] == "cosyvoice" and raw.get("python_executable"):
+        python_executable = resolve_absolute_regular_file(
+            raw["python_executable"], f"{resource_id}.python_executable"
+        )
     return TTSResource(
         resource_id=resource_id,
         engine=raw["engine"],
@@ -69,7 +75,7 @@ def _build_resource(resource_id: str, raw: dict[str, Any]) -> TTSResource:
         cnhubert_path=_resolved(raw, "cnhubert_path"),
         sv_path=_resolved(raw, "sv_path"),
         runtime_root=_resolved(raw, "runtime_root"),
-        python_executable=_resolved(raw, "python_executable"),
+        python_executable=python_executable,
         version=raw.get("version", "v2"),
     )
 
@@ -94,6 +100,8 @@ def _validate_resource(resource: TTSResource) -> None:
             _require_path(resource.runtime_root, f"{resource.resource_id}.runtime_root", directory=True)
     else:
         _require_path(resource.model_dir, f"{resource.resource_id}.model_dir", directory=True)
+        if resource.engine == "cosyvoice" and resource.python_executable is not None:
+            _require_path(resource.python_executable, f"{resource.resource_id}.python_executable")
 
 
 _registry: ResourceRegistry | None = None

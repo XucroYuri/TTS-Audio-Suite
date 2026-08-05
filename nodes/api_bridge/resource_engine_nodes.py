@@ -158,8 +158,11 @@ class ExternalCosyVoiceEngineNode:
     def create_engine(self, resource_id: str, device: str = "auto", use_fp16: bool = True, speed: float = 1.0,
                       instruct_text: str = "", load_trt: bool = False, load_vllm: bool = False):
         resource = get_resource_registry().require(resource_id, "cosyvoice")
-        return _engine_data("cosyvoice", "CosyVoiceAdapter", resource_id, {
+        config = {
             "model_path": str(resource.model_dir), "cosyvoice_home": str(resource.source_root),
             "device": device, "use_fp16": use_fp16, "speed": speed,
             "instruct_text": instruct_text.strip(), "load_trt": load_trt, "load_vllm": load_vllm,
-        })
+        }
+        if resource.python_executable is not None:
+            config["python_executable"] = str(resource.python_executable)
+        return _engine_data("cosyvoice", "CosyVoiceAdapter", resource_id, config)

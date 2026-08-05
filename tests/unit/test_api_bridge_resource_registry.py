@@ -238,3 +238,97 @@ def test_registry_rejects_missing_private_gpt_interpreter(tmp_path: Path):
 
     with pytest.raises(ValueError, match="local-gpt.python_executable"):
         ResourceRegistry.load(config)
+
+
+def test_registry_resolves_external_cosyvoice_interpreter_without_capability_leakage(tmp_path: Path):
+    source = tmp_path / "cosyvoice"
+    model = source / "pretrained_models" / "CosyVoice-300M"
+    interpreter = tmp_path / "isolated-cosyvoice-runtime" / "python.exe"
+    model.mkdir(parents=True)
+    interpreter.parent.mkdir()
+    interpreter.write_bytes(b"local")
+    config = tmp_path / "resources.yaml"
+    config.write_text(
+        "version: 1\nresources:\n  local-cosyvoice:\n"
+        "    engine: cosyvoice\n"
+        f"    source_root: '{source.as_posix()}'\n"
+        f"    model_dir: '{model.as_posix()}'\n"
+        f"    python_executable: '{interpreter.as_posix()}'\n",
+        encoding="utf-8",
+    )
+
+    registry = ResourceRegistry.load(config)
+
+    assert registry.require("local-cosyvoice", "cosyvoice").python_executable == interpreter.resolve()
+    assert registry.capabilities() == [
+        {"resource_id": "local-cosyvoice", "engine": "cosyvoice", "ready": True}
+    ]
+
+
+@pytest.mark.parametrize("interpreter_name", ("missing-python.exe", "python-directory"))
+def test_registry_rejects_missing_or_non_file_cosyvoice_interpreter(tmp_path: Path, interpreter_name: str):
+    source = tmp_path / "cosyvoice"
+    model = source / "pretrained_models" / "CosyVoice-300M"
+    model.mkdir(parents=True)
+    interpreter = tmp_path / interpreter_name
+    if interpreter_name == "python-directory":
+        interpreter.mkdir()
+    config = tmp_path / "resources.yaml"
+    config.write_text(
+        "version: 1\nresources:\n  local-cosyvoice:\n"
+        "    engine: cosyvoice\n"
+        f"    source_root: '{source.as_posix()}'\n"
+        f"    model_dir: '{model.as_posix()}'\n"
+        f"    python_executable: '{interpreter.as_posix()}'\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="local-cosyvoice.python_executable"):
+        ResourceRegistry.load(config)
+
+
+def test_registry_rejects_relative_cosyvoice_interpreter(tmp_path: Path):
+    source = tmp_path / "cosyvoice"
+    model = source / "pretrained_models" / "CosyVoice-300M"
+    model.mkdir(parents=True)
+    config = tmp_path / "resources.yaml"
+    config.write_text(
+        "version: 1\nresources:\n  local-cosyvoice:\n"
+        "    engine: cosyvoice\n"
+        f"    source_root: '{source.as_posix()}'\n"
+        f"    model_dir: '{model.as_posix()}'\n"
+        "    python_executable: './isolated/python.exe'\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="local-cosyvoice.python_executable must be an absolute path"):
+        ResourceRegistry.load(config)
+
+
+def test_registry_rejects_cosyvoice_interpreter_reparse_path(tmp_path: Path, monkeypatch):
+    from api_bridge import path_safety
+
+    source = tmp_path / "cosyvoice"
+    model = source / "pretrained_models" / "CosyVoice-300M"
+    interpreter = tmp_path / "isolated-cosyvoice-runtime" / "python.exe"
+    model.mkdir(parents=True)
+    interpreter.parent.mkdir()
+    interpreter.touch()
+    config = tmp_path / "resources.yaml"
+    config.write_text(
+        "version: 1\nresources:\n  local-cosyvoice:\n"
+        "    engine: cosyvoice\n"
+        f"    source_root: '{source.as_posix()}'\n"
+        f"    model_dir: '{model.as_posix()}'\n"
+        f"    python_executable: '{interpreter.as_posix()}'\n",
+        encoding="utf-8",
+    )
+    original = path_safety._is_reparse_point
+    monkeypatch.setattr(
+        path_safety,
+        "_is_reparse_point",
+        lambda path: path == interpreter or original(path),
+    )
+
+    with pytest.raises(ValueError, match="local-cosyvoice.python_executable must not traverse a reparse point"):
+        ResourceRegistry.load(config)

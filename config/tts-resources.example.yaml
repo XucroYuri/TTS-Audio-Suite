@@ -18,3 +18,6 @@ resources:
     engine: cosyvoice
     source_root: C:/tts-resources/CosyVoice
     model_dir: C:/tts-resources/CosyVoice/pretrained_models/CosyVoice-300M
+    # Optional: an absolute regular interpreter file for an isolated CosyVoice runtime.
+    # It may live outside source_root; reparse-point paths are rejected.
+    # python_executable: F:/tts-runtimes/cosyvoice/python.exe

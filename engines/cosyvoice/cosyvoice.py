@@ -69,7 +69,8 @@ class CosyVoiceEngine:
             raise InterruptedError("CosyVoice3 generation interrupted by user")
     
     def __init__(self, model_dir: str = "Fun-CosyVoice3-0.5B-RL", source_root: Optional[str] = None, device: str = "auto",
-                 use_fp16: bool = False, load_trt: bool = False, load_vllm: bool = False):
+                 use_fp16: bool = False, load_trt: bool = False, load_vllm: bool = False,
+                 python_executable: Optional[str] = None):
         """
         Initialize CosyVoice3 engine.
 
@@ -91,6 +92,7 @@ class CosyVoiceEngine:
         self.use_fp16 = use_fp16 and self.device != "cpu"
         self.load_trt = load_trt
         self.load_vllm = load_vllm
+        self.python_executable = python_executable
 
         self._cosyvoice = None
         self._model_config = None
@@ -185,6 +187,7 @@ class CosyVoiceEngine:
                 use_fp16=self.use_fp16,
                 load_trt=self.load_trt,
                 load_vllm=self.load_vllm,
+                python_executable=self.python_executable,
                 temp_root=folder_paths.get_temp_directory(),
             )
             print(f"✅ CosyVoice official subprocess runtime ready on {self.device}")
