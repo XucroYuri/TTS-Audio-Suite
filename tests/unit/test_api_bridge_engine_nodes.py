@@ -1792,26 +1792,37 @@ def test_cosyvoice_adapter_preserves_legacy_positional_initialize_arguments(monk
 
 
 @pytest.mark.unit
-def test_cosyvoice_check_interrupt_raises_official_comfy_exception(monkeypatch):
+@pytest.mark.parametrize("interrupt_base", [Exception, BaseException])
+def test_cosyvoice_check_interrupt_raises_official_comfy_exception(monkeypatch, interrupt_base):
     import engines.cosyvoice.cosyvoice as cosyvoice_module
 
-    class ComfyInterrupt(Exception):
+    class ComfyInterrupt(interrupt_base):
         pass
 
     monkeypatch.setattr(
-        cosyvoice_module.model_management,
-        "InterruptProcessingException",
-        ComfyInterrupt,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        cosyvoice_module.model_management,
-        "interrupt_processing",
-        True,
-        raising=False,
+        cosyvoice_module,
+        "model_management",
+        types.SimpleNamespace(
+            InterruptProcessingException=ComfyInterrupt,
+            interrupt_processing=True,
+        ),
     )
 
     with pytest.raises(ComfyInterrupt):
+        cosyvoice_module.CosyVoiceEngine._check_interrupt()
+
+
+@pytest.mark.unit
+def test_cosyvoice_check_interrupt_falls_back_only_without_comfy_exception(monkeypatch):
+    import engines.cosyvoice.cosyvoice as cosyvoice_module
+
+    monkeypatch.setattr(
+        cosyvoice_module,
+        "model_management",
+        types.SimpleNamespace(interrupt_processing=True),
+    )
+
+    with pytest.raises(InterruptedError, match="CosyVoice3 generation interrupted by user"):
         cosyvoice_module.CosyVoiceEngine._check_interrupt()
 
 
