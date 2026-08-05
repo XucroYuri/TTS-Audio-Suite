@@ -213,6 +213,7 @@ class ExternalCosyVoiceSubprocessProxy(ExternalIndexTTSSubprocessProxy):
                 "source_root": str(self.source_root),
                 "model_dir": str(self.model_dir),
                 "output_path": str(child_output),
+                "device": self.device,
                 "constructor": {
                     "use_fp16": self.use_fp16,
                     "load_trt": self.load_trt,
@@ -252,6 +253,14 @@ class ExternalCosyVoiceSubprocessProxy(ExternalIndexTTSSubprocessProxy):
                     "MPLCONFIGDIR": _private_child_path(temporary_path / "matplotlib"),
                 }
             )
+            # CosyVoice selects CUDA during the child interpreter's imports.
+            # A configured CPU engine must therefore hide CUDA before the
+            # runner starts. ``-1`` is required on Windows: an empty mask can
+            # still leave CUDA available to PyTorch. GPU configurations
+            # intentionally retain the parent's visibility mask and existing
+            # device-selection behavior.
+            if self.device.strip().lower() == "cpu":
+                environment["CUDA_VISIBLE_DEVICES"] = "-1"
             _set_private_temp_environment(environment, temporary_path)
             popen_kwargs: dict[str, Any] = {
                 "cwd": str(self.source_root),
