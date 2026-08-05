@@ -55,11 +55,10 @@ class ExternalCosyVoiceSubprocessProxy(ExternalIndexTTSSubprocessProxy):
         self.termination_grace_seconds = float(termination_grace_seconds)
         self.temp_root = Path(temp_root).resolve() if temp_root is not None else None
         self.interrupt_check = interrupt_check or _comfyui_interrupt_requested
-        self.python_executable = (
-            resolve_absolute_regular_file(python_executable, "CosyVoice python_executable")
-            if python_executable is not None
-            else self._resolve_python_executable()
+        self._configured_python_executable = (
+            Path(python_executable).expanduser() if python_executable is not None else None
         )
+        self.python_executable = self._resolve_configured_python_executable()
         self.runner_path = Path(__file__).with_name("external_subprocess_runner.py").resolve()
         self._validate_runtime()
 
@@ -67,6 +66,13 @@ class ExternalCosyVoiceSubprocessProxy(ExternalIndexTTSSubprocessProxy):
         if os.name == "nt":
             return self.source_root / ".venv" / "Scripts" / "python.exe"
         return self.source_root / ".venv" / "bin" / "python"
+
+    def _resolve_configured_python_executable(self) -> Path:
+        if self._configured_python_executable is not None:
+            return resolve_absolute_regular_file(
+                self._configured_python_executable, "CosyVoice python_executable"
+            )
+        return self._resolve_python_executable()
 
     def _validate_runtime(self) -> None:
         if not self.source_root.is_dir():
@@ -225,6 +231,10 @@ class ExternalCosyVoiceSubprocessProxy(ExternalIndexTTSSubprocessProxy):
                 json.dumps(manifest, ensure_ascii=False, allow_nan=False),
                 encoding="utf-8",
             )
+            # The configuration can outlive a registry reload. Revalidate the
+            # explicit interpreter immediately before each process creation so
+            # a later reparse-point substitution fails closed.
+            self.python_executable = self._resolve_configured_python_executable()
             command = [str(self.python_executable), str(self.runner_path), str(manifest_path)]
             environment = os.environ.copy()
             environment.update(

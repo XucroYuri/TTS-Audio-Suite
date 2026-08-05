@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
@@ -43,3 +44,10 @@ def resolve_absolute_regular_file(value: str | Path, label: str) -> Path:
     if not resolved.is_file():
         raise ValueError(f"{label} must be a regular file: {resolved}")
     return resolved
+
+
+def canonical_path_identity(value: str | Path | None) -> str | None:
+    """Return an OS-canonical identity suitable for a private cache key."""
+    if value is None:
+        return None
+    return os.path.normcase(os.path.realpath(os.path.expanduser(str(value))))

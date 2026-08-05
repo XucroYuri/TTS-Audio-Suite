@@ -49,6 +49,7 @@ from utils.config_sanitizer import ConfigSanitizer
 import comfy.model_management as model_management
 import folder_paths
 from api_bridge.assets import pin_voice_asset
+from api_bridge.path_safety import canonical_path_identity
 from api_bridge.runtime_registry import (
     RuntimeHandle,
     get_runtime_registry,
@@ -368,6 +369,9 @@ Back to the main narrator voice for the conclusion.""",
             if engine_type == "cosyvoice":
                 stable_params['resource_id'] = config.get('resource_id')
                 stable_params['model_path'] = config.get('model_path', 'Fun-CosyVoice3-0.5B-RL')
+                stable_params['python_executable'] = canonical_path_identity(
+                    config.get('python_executable')
+                )
                 stable_params['use_fp16'] = config.get('use_fp16', True)
                 stable_params['load_trt'] = config.get('load_trt', False)
                 stable_params['load_vllm'] = config.get('load_vllm', False)

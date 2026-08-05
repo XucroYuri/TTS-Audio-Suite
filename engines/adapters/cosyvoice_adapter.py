@@ -62,11 +62,11 @@ class CosyVoiceAdapter:
     def initialize_engine(self,
                          model_path: Optional[str] = None,
                          cosyvoice_home: Optional[str] = None,
-                         python_executable: Optional[str] = None,
                          device: str = "auto",
                          use_fp16: bool = True,
                          load_trt: bool = False,
-                         load_vllm: bool = False):
+                         load_vllm: bool = False,
+                         python_executable: Optional[str] = None):
         """
         Initialize CosyVoice3 engine.
 
