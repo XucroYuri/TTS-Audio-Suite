@@ -48,6 +48,16 @@ from api_bridge.runtime_registry import (
     make_runtime_key,
 )
 
+
+def _is_comfyui_interrupt(error: BaseException) -> bool:
+    """Keep ComfyUI's official cancellation marker out of node fallbacks."""
+    interrupt_exception = getattr(
+        model_management, "InterruptProcessingException", None
+    )
+    return isinstance(interrupt_exception, type) and isinstance(
+        error, interrupt_exception
+    )
+
 # AnyType for flexible input types (accepts any data type)
 class AnyType(str):
     def __ne__(self, __value: object) -> bool:
@@ -1109,7 +1119,7 @@ Hello! This is unified SRT TTS with character switching.
                 raise ValueError(f"Unknown engine type: {engine_type}")
                 
         except Exception as e:
-            if isinstance(e, InterruptedError):
+            if isinstance(e, InterruptedError) or _is_comfyui_interrupt(e):
                 raise
             print(f"❌ Failed to create engine SRT node instance: {e}")
             return None
@@ -1202,7 +1212,7 @@ Hello! This is unified SRT TTS with character switching.
             return None, None, "", "narrator"
             
         except Exception as e:
-            if isinstance(e, InterruptedError):
+            if isinstance(e, InterruptedError) or _is_comfyui_interrupt(e):
                 raise
             print(f"❌ Voice reference error: {e}")
             return None, None, "", "narrator"
@@ -1814,7 +1824,7 @@ Hello! This is unified SRT TTS with character switching.
                 or "MOSS-TTSD Native Multi-Speaker Dialogue does not support this SRT input" in msg
             ):
                 raise
-            if isinstance(e, InterruptedError):
+            if isinstance(e, InterruptedError) or _is_comfyui_interrupt(e):
                 raise
             error_msg = f"❌ TTS SRT generation failed: {e}"
             print(error_msg)
