@@ -2,6 +2,7 @@ import importlib.util
 import json
 import math
 import os
+from contextlib import nullcontext
 from pathlib import Path
 import subprocess
 import sys
@@ -2805,6 +2806,70 @@ def _force_cache_valid(monkeypatch):
     from utils.models import comfyui_model_wrapper
 
     monkeypatch.setattr(comfyui_model_wrapper, "is_engine_cache_valid", lambda _: True)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("filename", "module_name", "invoke"),
+    [
+        (
+            "tts_text_node.py",
+            "cosy_text_comfy_interrupt_propagation_test",
+            lambda node: node.generate_speech(
+                {"engine_type": "cosyvoice", "config": {"resource_id": "cosy"}},
+                "cancel me",
+                "none",
+                0,
+            ),
+        ),
+        (
+            "tts_srt_node.py",
+            "cosy_srt_comfy_interrupt_propagation_test",
+            lambda node: node.generate_srt_speech(
+                {"engine_type": "cosyvoice", "config": {"resource_id": "cosy"}},
+                "1\n00:00:00,000 --> 00:00:01,000\ncancel me",
+                "none",
+                0,
+                "natural",
+            ),
+        ),
+    ],
+)
+def test_cosyvoice_official_comfy_interrupt_reaches_execution_boundary(
+    monkeypatch, filename, module_name, invoke
+):
+    module = _load_unified_node(filename, module_name)
+
+    class ComfyInterrupt(Exception):
+        pass
+
+    class Engine:
+        _api_bridge_runtime_key = "cosy-cancel"
+
+        def generate_tts_audio(self, **_kwargs):
+            raise ComfyInterrupt()
+
+    class Processor:
+        def process_srt_content(self, **_kwargs):
+            raise ComfyInterrupt()
+
+    engine = Engine()
+    engine.processor = Processor()
+    node_class = getattr(module, "UnifiedTTSTextNode", None) or module.UnifiedTTSSRTNode
+    node = node_class()
+    monkeypatch.setattr(
+        module.model_management,
+        "InterruptProcessingException",
+        ComfyInterrupt,
+        raising=False,
+    )
+    monkeypatch.setattr(node, "_create_proper_engine_node_instance", lambda _config: engine)
+    monkeypatch.setattr(node, "_get_voice_reference", lambda *_args: (None, None, "", "narrator"))
+    monkeypatch.setattr(node, "_target_runtime_lease", lambda *_args: nullcontext())
+    monkeypatch.setattr(module, "pin_voice_asset", lambda *_args: nullcontext())
+
+    with pytest.raises(ComfyInterrupt):
+        invoke(node)
 
 
 @pytest.mark.unit
