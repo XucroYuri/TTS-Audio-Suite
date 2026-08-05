@@ -1470,6 +1470,7 @@ def test_external_cosyvoice_subprocess_uses_checkout_venv_offline_and_cleans_tem
     module = _load_external_cosyvoice_subprocess_module()
     source_root, model_dir, python_executable, voice_path, temp_root = _prepare_external_cosyvoice_runtime(tmp_path)
     observed = {}
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
 
     class FakeProcess:
         pid = 5242
@@ -1526,6 +1527,7 @@ def test_external_cosyvoice_subprocess_uses_checkout_venv_offline_and_cleans_tem
     assert child_environment["TTS_AUDIO_SUITE_OFFLINE"] == "1"
     assert child_environment["HF_HUB_OFFLINE"] == "1"
     assert child_environment["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert child_environment["CUDA_VISIBLE_DEVICES"] == "0"
     for variable in ("TEMP", "TMP"):
         private_temp = _path_without_windows_extended_prefix(child_environment[variable])
         assert private_temp.is_relative_to(temp_root.resolve())
@@ -1533,9 +1535,53 @@ def test_external_cosyvoice_subprocess_uses_checkout_venv_offline_and_cleans_tem
             assert child_environment[variable].startswith("\\\\?\\")
     assert observed["manifest"]["mode"] == "cross_lingual"
     assert observed["manifest"]["text"] == "真实外部推理。"
+    assert observed["manifest"]["device"] == "cuda"
     assert outputs[0]["tts_speech"].shape == (1, 240)
     assert proxy.sample_rate == 24000
     assert not list(temp_root.iterdir())
+
+
+@pytest.mark.unit
+def test_external_cosyvoice_subprocess_disables_cuda_for_cpu_child(monkeypatch, tmp_path):
+    module = _load_external_cosyvoice_subprocess_module()
+    source_root, model_dir, _, voice_path, temp_root = _prepare_external_cosyvoice_runtime(tmp_path)
+    observed = {}
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+
+    class FakeProcess:
+        pid = 5244
+        returncode = 0
+
+        def __init__(self, command, **kwargs):
+            observed["command"] = command
+            observed["environment"] = kwargs["env"]
+
+        def communicate(self, timeout):
+            manifest = json.loads(Path(observed["command"][2]).read_text(encoding="utf-8"))
+            observed["manifest"] = manifest
+            with wave.open(manifest["output_path"], "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(24000)
+                handle.writeframes(b"\x10\x00" * 240)
+            return "", ""
+
+    monkeypatch.setattr(module.subprocess, "Popen", FakeProcess)
+    proxy = module.ExternalCosyVoiceSubprocessProxy(
+        source_root=source_root,
+        model_dir=model_dir,
+        device="cpu",
+        use_fp16=False,
+        temp_root=temp_root,
+        interrupt_check=lambda: False,
+    )
+
+    outputs = list(proxy.inference_cross_lingual(tts_text="CPU child", prompt_wav=str(voice_path)))
+
+    assert observed["environment"]["CUDA_VISIBLE_DEVICES"] == "-1"
+    assert observed["manifest"]["device"] == "cpu"
+    assert observed["manifest"]["constructor"]["use_fp16"] is False
+    assert outputs[0]["tts_speech"].shape == (1, 240)
 
 
 @pytest.mark.unit
