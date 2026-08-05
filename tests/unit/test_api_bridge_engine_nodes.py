@@ -1791,6 +1791,30 @@ def test_cosyvoice_adapter_preserves_legacy_positional_initialize_arguments(monk
     }
 
 
+@pytest.mark.unit
+def test_cosyvoice_check_interrupt_raises_official_comfy_exception(monkeypatch):
+    import engines.cosyvoice.cosyvoice as cosyvoice_module
+
+    class ComfyInterrupt(Exception):
+        pass
+
+    monkeypatch.setattr(
+        cosyvoice_module.model_management,
+        "InterruptProcessingException",
+        ComfyInterrupt,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cosyvoice_module.model_management,
+        "interrupt_processing",
+        True,
+        raising=False,
+    )
+
+    with pytest.raises(ComfyInterrupt):
+        cosyvoice_module.CosyVoiceEngine._check_interrupt()
+
+
 
 @pytest.mark.unit
 def test_external_index_subprocess_uses_checkout_venv_and_cleans_temp(monkeypatch, tmp_path):

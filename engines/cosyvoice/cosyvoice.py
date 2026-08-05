@@ -66,6 +66,13 @@ class CosyVoiceEngine:
     def _check_interrupt():
         """Raise immediately when ComfyUI interrupt was requested."""
         if model_management.interrupt_processing:
+            interrupt_exception = getattr(
+                model_management, "InterruptProcessingException", None
+            )
+            if isinstance(interrupt_exception, type) and issubclass(
+                interrupt_exception, BaseException
+            ):
+                raise interrupt_exception()
             raise InterruptedError("CosyVoice3 generation interrupted by user")
     
     def __init__(self, model_dir: str = "Fun-CosyVoice3-0.5B-RL", source_root: Optional[str] = None, device: str = "auto",
