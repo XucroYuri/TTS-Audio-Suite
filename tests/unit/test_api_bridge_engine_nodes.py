@@ -1504,6 +1504,7 @@ def test_external_cosyvoice_subprocess_uses_checkout_venv_offline_and_cleans_tem
         use_fp16=True,
         timeout_seconds=321.0,
         temp_root=temp_root,
+        interrupt_check=lambda: False,
     )
 
     outputs = list(
@@ -1534,6 +1535,122 @@ def test_external_cosyvoice_subprocess_uses_checkout_venv_offline_and_cleans_tem
     assert outputs[0]["tts_speech"].shape == (1, 240)
     assert proxy.sample_rate == 24000
     assert not list(temp_root.iterdir())
+
+
+@pytest.mark.unit
+def test_external_cosyvoice_subprocess_uses_explicit_external_interpreter(monkeypatch, tmp_path):
+    module = _load_external_cosyvoice_subprocess_module()
+    source_root, model_dir, checkout_interpreter, voice_path, temp_root = _prepare_external_cosyvoice_runtime(tmp_path)
+    explicit_interpreter = tmp_path / "isolated-cosyvoice-runtime" / "python.exe"
+    explicit_interpreter.parent.mkdir()
+    explicit_interpreter.touch()
+    observed = {}
+
+    class FakeProcess:
+        pid = 5243
+        returncode = 0
+
+        def __init__(self, command, **kwargs):
+            observed["command"] = command
+
+        def communicate(self, timeout):
+            manifest = json.loads(Path(observed["command"][2]).read_text(encoding="utf-8"))
+            with wave.open(manifest["output_path"], "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(24000)
+                handle.writeframes(b"\x10\x00" * 240)
+            return "", ""
+
+    monkeypatch.setattr(module.subprocess, "Popen", FakeProcess)
+    proxy = module.ExternalCosyVoiceSubprocessProxy(
+        source_root=source_root,
+        model_dir=model_dir,
+        device="cuda",
+        use_fp16=True,
+        python_executable=explicit_interpreter,
+        temp_root=temp_root,
+        interrupt_check=lambda: False,
+    )
+
+    list(proxy.inference_cross_lingual(tts_text="override", prompt_wav=str(voice_path)))
+
+    assert proxy.python_executable == explicit_interpreter.resolve()
+    assert proxy.python_executable != checkout_interpreter.resolve()
+    assert observed["command"][0] == str(explicit_interpreter.resolve())
+
+
+@pytest.mark.unit
+def test_external_cosyvoice_subprocess_rejects_missing_or_directory_explicit_interpreter(tmp_path):
+    module = _load_external_cosyvoice_subprocess_module()
+    source_root, model_dir, _, _, temp_root = _prepare_external_cosyvoice_runtime(tmp_path)
+    missing = tmp_path / "missing-python.exe"
+    directory = tmp_path / "not-an-interpreter"
+    directory.mkdir()
+
+    for interpreter in (missing, directory):
+        with pytest.raises(ValueError, match="CosyVoice python_executable"):
+            module.ExternalCosyVoiceSubprocessProxy(
+                source_root=source_root,
+                model_dir=model_dir,
+                device="cuda",
+                use_fp16=True,
+                python_executable=interpreter,
+                temp_root=temp_root,
+            )
+
+
+@pytest.mark.unit
+def test_external_cosyvoice_subprocess_revalidates_explicit_interpreter_before_start(monkeypatch, tmp_path):
+    module = _load_external_cosyvoice_subprocess_module()
+    source_root, model_dir, _, voice_path, temp_root = _prepare_external_cosyvoice_runtime(tmp_path)
+    interpreter = tmp_path / "isolated-cosyvoice-runtime" / "python.exe"
+    interpreter.parent.mkdir()
+    interpreter.touch()
+    proxy = module.ExternalCosyVoiceSubprocessProxy(
+        source_root=source_root,
+        model_dir=model_dir,
+        device="cuda",
+        use_fp16=True,
+        python_executable=interpreter,
+        temp_root=temp_root,
+        interrupt_check=lambda: False,
+    )
+
+    def reject_drifted_interpreter(value, label):
+        assert Path(value) == interpreter
+        assert label == "CosyVoice python_executable"
+        raise ValueError("CosyVoice python_executable must not traverse a reparse point")
+
+    monkeypatch.setattr(module, "resolve_absolute_regular_file", reject_drifted_interpreter)
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *_args, **_kwargs: pytest.fail("Popen must not start"))
+
+    with pytest.raises(ValueError, match="reparse point"):
+        list(proxy.inference_cross_lingual(tts_text="drift", prompt_wav=str(voice_path)))
+
+
+@pytest.mark.unit
+def test_external_cosyvoice_engine_node_passes_registered_external_interpreter(monkeypatch, tmp_path):
+    interpreter = tmp_path / "isolated-cosyvoice-runtime" / "python.exe"
+    interpreter.parent.mkdir()
+    interpreter.touch()
+
+    class Registry:
+        def require(self, resource_id, engine):
+            assert (resource_id, engine) == ("local-cosyvoice", "cosyvoice")
+            return TTSResource(
+                resource_id=resource_id,
+                engine=engine,
+                source_root=tmp_path / "cosyvoice-source",
+                model_dir=tmp_path / "cosyvoice-model",
+                python_executable=interpreter.resolve(),
+            )
+
+    monkeypatch.setattr(bridge, "get_resource_registry", lambda: Registry())
+
+    (engine,) = bridge.ExternalCosyVoiceEngineNode().create_engine("local-cosyvoice")
+
+    assert engine["config"]["python_executable"] == str(interpreter.resolve())
 
 
 @pytest.mark.unit
@@ -1639,12 +1756,39 @@ def test_cosyvoice_processor_passes_registered_checkout_to_adapter(monkeypatch):
         {
             "model_path": "C:/cosy/model",
             "cosyvoice_home": "C:/cosy/source",
+            "python_executable": "F:/isolated-cosyvoice/python.exe",
             "device": "cuda",
         }
     )
 
     assert initialized["model_path"] == "C:/cosy/model"
     assert initialized["cosyvoice_home"] == "C:/cosy/source"
+    assert initialized["python_executable"] == "F:/isolated-cosyvoice/python.exe"
+
+
+@pytest.mark.unit
+def test_cosyvoice_adapter_preserves_legacy_positional_initialize_arguments(monkeypatch):
+    import engines.adapters.cosyvoice_adapter as adapter_module
+
+    initialized = {}
+
+    class FakeEngine:
+        def __init__(self, **kwargs):
+            initialized.update(kwargs)
+
+    monkeypatch.setattr(adapter_module, "CosyVoiceEngine", FakeEngine)
+    adapter = adapter_module.CosyVoiceAdapter()
+    adapter.initialize_engine("model", "source", "cpu", False, True, True)
+
+    assert initialized == {
+        "model_dir": "model",
+        "source_root": "source",
+        "python_executable": None,
+        "device": "cpu",
+        "use_fp16": False,
+        "load_trt": True,
+        "load_vllm": True,
+    }
 
 
 
@@ -2840,6 +2984,31 @@ def test_text_cache_recreates_cosyvoice_wrapper_when_resource_identity_changes(m
 
 
 @pytest.mark.unit
+def test_text_cache_recreates_cosyvoice_wrapper_when_python_runtime_changes(monkeypatch):
+    module = _load_unified_node("tts_text_node.py", "cosy_text_python_cache_key_test")
+    _force_cache_valid(monkeypatch)
+    registry = RuntimeRegistry()
+    monkeypatch.setattr(module, "get_runtime_registry", lambda: registry)
+    node = module.UnifiedTTSTextNode()
+    base = {
+        "engine_type": "cosyvoice",
+        "config": {
+            "resource_id": "cosy-a",
+            "model_path": "C:/cosy/model",
+            "python_executable": "F:/cosy-runtime-a/python.exe",
+            "device": "cpu",
+            "use_fp16": False,
+        },
+    }
+    changed = {
+        "engine_type": "cosyvoice",
+        "config": dict(base["config"], python_executable="F:/cosy-runtime-b/python.exe"),
+    }
+
+    assert node._create_proper_engine_node_instance(base) is not node._create_proper_engine_node_instance(changed)
+
+
+@pytest.mark.unit
 def test_srt_cache_recreates_cosyvoice_wrapper_when_resource_identity_changes(monkeypatch):
     module = _load_unified_node("tts_srt_node.py", "cosy_srt_resource_cache_key_test")
     _force_cache_valid(monkeypatch)
@@ -2871,5 +3040,45 @@ def test_srt_cache_recreates_cosyvoice_wrapper_when_resource_identity_changes(mo
         },
     }
     changed = {"engine_type": "cosyvoice", "config": dict(base["config"], resource_id="cosy-b")}
+
+    assert node._create_proper_engine_node_instance(base) is not node._create_proper_engine_node_instance(changed)
+
+
+@pytest.mark.unit
+def test_srt_cache_recreates_cosyvoice_wrapper_when_python_runtime_changes(monkeypatch):
+    module = _load_unified_node("tts_srt_node.py", "cosy_srt_python_cache_key_test")
+    _force_cache_valid(monkeypatch)
+    registry = RuntimeRegistry()
+    monkeypatch.setattr(module, "get_runtime_registry", lambda: registry)
+
+    class FakeSRTProcessor:
+        def __init__(self, wrapper, config):
+            self.config = config
+
+        def update_config(self, config):
+            self.config = config
+
+        def cleanup(self):
+            pass
+
+    fake_module = types.SimpleNamespace(CosyVoiceSRTProcessor=FakeSRTProcessor)
+    fake_spec = types.SimpleNamespace(loader=types.SimpleNamespace(exec_module=lambda _: None))
+    monkeypatch.setattr(module.importlib.util, "spec_from_file_location", lambda *_: fake_spec)
+    monkeypatch.setattr(module.importlib.util, "module_from_spec", lambda _: fake_module)
+    node = module.UnifiedTTSSRTNode()
+    base = {
+        "engine_type": "cosyvoice",
+        "config": {
+            "resource_id": "cosy-a",
+            "model_path": "C:/cosy/model",
+            "python_executable": "F:/cosy-runtime-a/python.exe",
+            "device": "cpu",
+            "use_fp16": False,
+        },
+    }
+    changed = {
+        "engine_type": "cosyvoice",
+        "config": dict(base["config"], python_executable="F:/cosy-runtime-b/python.exe"),
+    }
 
     assert node._create_proper_engine_node_instance(base) is not node._create_proper_engine_node_instance(changed)

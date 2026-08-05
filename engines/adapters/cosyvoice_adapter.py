@@ -48,6 +48,7 @@ class CosyVoiceAdapter:
         self._init_params = {
             "model_path": None,
             "cosyvoice_home": None,
+            "python_executable": None,
             "device": "auto",
             "use_fp16": True,
             "load_trt": False,
@@ -64,7 +65,8 @@ class CosyVoiceAdapter:
                          device: str = "auto",
                          use_fp16: bool = True,
                          load_trt: bool = False,
-                         load_vllm: bool = False):
+                         load_vllm: bool = False,
+                         python_executable: Optional[str] = None):
         """
         Initialize CosyVoice3 engine.
 
@@ -79,6 +81,7 @@ class CosyVoiceAdapter:
         self._init_params.update({
             "model_path": model_path,
             "cosyvoice_home": cosyvoice_home,
+            "python_executable": python_executable,
             "device": device,
             "use_fp16": use_fp16,
             "load_trt": load_trt,
@@ -103,6 +106,7 @@ class CosyVoiceAdapter:
         self.engine = CosyVoiceEngine(
             model_dir=model_path,
             source_root=cosyvoice_home,
+            python_executable=python_executable,
             device=device,
             use_fp16=use_fp16,
             load_trt=load_trt,
