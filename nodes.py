@@ -941,8 +941,9 @@ if startup_warnings:
 # This will print warnings after ComfyUI loads if there are missing dependencies
 if DEPENDENCY_CHECKER_AVAILABLE and AsyncDependencyChecker:
     try:
+        from utils.system.first_run_bootstrap import dependency_check_callback
         async_checker = AsyncDependencyChecker()
-        async_checker.start_background_check()
+        async_checker.start_background_check(dependency_check_callback)
     except Exception:
         pass  # Silently fail - background check is optional
 
