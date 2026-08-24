@@ -1443,6 +1443,14 @@ If the engine comparison table shows **`Shared`** or **`Dedicated`** in the **Is
 
 * **If you cloned the node manually (without the Manager):** Make sure you install the requirements.txt file.
 
+#### ComfyUI Desktop / git-clone without the Manager
+
+Desktop-style installs clone the node without ever running `install.py`, so engines start out broken. On first launch the suite detects this (missing engine dependencies + no installer state) and repairs itself in a background subprocess — up to 30 minutes, output in `.cache/bootstrap.log`. **Restart ComfyUI afterwards** so every engine picks up the new packages.
+
+* Disable: set `TTS_AUDIO_SUITE_AUTO_INSTALL=0` before launching ComfyUI
+* Timeout: set `TTS_AUDIO_SUITE_BOOTSTRAP_TIMEOUT=<seconds>` (default `1800`)
+* Manual path unchanged: `python install.py`
+
 ### Updating the Node
 
 To update the node to the latest version:
