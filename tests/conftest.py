@@ -18,6 +18,12 @@ from unittest.mock import MagicMock
 os.environ['COMFYUI_TESTING'] = '1'
 os.environ['PYTEST_CURRENT_TEST'] = 'true'
 
+# Make repo-root packages (api_bridge, utils, ...) importable regardless of the
+# launcher: CI runs pytest from the repo root, run_tests.py chdirs into tests/.
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
 # Mock ComfyUI modules at module level - BEFORE any imports can trigger __init__.py
 _MOCK_MODULES = [
     'comfy',
