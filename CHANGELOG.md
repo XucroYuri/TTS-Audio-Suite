@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.7.0] - 2026-08-25
+
+### Added
+
+- Add first-run dependency bootstrap for git-clone installs (ComfyUI Desktop and similar managed setups): when the startup check finds missing engine dependencies and `install.py` has never completed, the installer now runs once automatically in a background subprocess with a hard timeout. Disable with `TTS_AUDIO_SUITE_AUTO_INSTALL=0`; adjust the timeout with `TTS_AUDIO_SUITE_BOOTSTRAP_TIMEOUT=<seconds>`. Progress logs to `.cache/bootstrap.log`.
+
 ## [5.6.2] - 2026-07-30
 
 ### Changed
