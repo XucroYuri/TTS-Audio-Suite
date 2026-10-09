@@ -436,7 +436,9 @@ class ExternalIndexTTSSubprocessProxy:
 
     def _resolve_python_executable(self) -> Path:
         if os.name == "nt":
-            return self.source_root / ".venv" / "Scripts" / "python.exe"
+            standard = self.source_root / ".venv" / "Scripts" / "python.exe"
+            portable = self.source_root / "env" / "python.exe"
+            return standard if standard.is_file() else portable
         return self.source_root / ".venv" / "bin" / "python"
 
     def _validate_runtime(self) -> None:
