@@ -1099,6 +1099,7 @@ def test_external_gpt_subprocess_preserves_registered_lineage_offline_and_cleans
         timeout_seconds=321.0,
         temp_root=temp_root,
     )
+    proxy.interrupt_check = lambda: False
 
     sample_rate, samples = proxy.run(
         {
