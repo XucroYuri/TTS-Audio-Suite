@@ -20,3 +20,12 @@ streaming options fail explicitly; disabled defaults remain compatible.
 When `model_dir/hub` exists, the runner initialises Hugging Face's cache constants
 before importing the portable checkout. Existing operator cache environment
 variables take precedence, and offline mode is not forced.
+
+## GPT-SoVITS checkpoint selection
+
+`TTSExternalGPTSovitsEngine` accepts optional `gpt_checkpoint` and
+`sovits_checkpoint` filenames. Empty values use the registered pair. A selection
+must be a regular `.ckpt` or `.pth` file in the corresponding registered weight
+directory. Absolute paths, directory traversal, links, junctions, and other
+checkpoint directories are rejected. Source/runtime and pretrained components
+continue to come from `resource_id`; upstream code remains unchanged.

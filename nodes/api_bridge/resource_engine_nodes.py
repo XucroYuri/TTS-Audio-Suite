@@ -1,10 +1,23 @@
-"""Engine nodes that resolve private local resources by public IDs only."""
+"""Engine nodes resolving registered resources and confined checkpoint choices."""
 
 from __future__ import annotations
 
 from typing import Any
+from pathlib import Path
 
 from api_bridge.resource_registry import get_resource_registry
+from api_bridge.path_safety import resolve_absolute_regular_file
+
+
+def _checkpoint_choice(value: str, registered: Path, suffix: str) -> Path:
+    if not value.strip():
+        return registered
+    if Path(value).name != value or "/" in value or "\\" in value:
+        raise ValueError("checkpoint must be a filename in the registered weight directory")
+    candidate = resolve_absolute_regular_file(registered.parent / value, "checkpoint")
+    if candidate.suffix.casefold() != suffix or candidate.parent != registered.parent.resolve():
+        raise ValueError("checkpoint must belong to the registered weight directory and type")
+    return candidate
 
 
 def _engine_data(engine: str, adapter_class: str, resource_id: str, config: dict[str, Any]):
@@ -35,6 +48,8 @@ class ExternalGPTSovitsEngineNode:
                 "top_k": ("INT", {"default": 15, "min": 1, "max": 100, "step": 1}),
                 "top_p": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
                 "temperature": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "gpt_checkpoint": ("STRING", {"default": ""}),
+                "sovits_checkpoint": ("STRING", {"default": ""}),
             },
         }
 
@@ -55,11 +70,13 @@ class ExternalGPTSovitsEngineNode:
         top_k: int = 15,
         top_p: float = 1.0,
         temperature: float = 1.0,
+        gpt_checkpoint: str = "",
+        sovits_checkpoint: str = "",
     ):
         resource = get_resource_registry().require(resource_id, "gpt_sovits")
         config = {
-            "gpt_weight": str(resource.gpt_weight),
-            "sovits_weight": str(resource.sovits_weight),
+            "gpt_weight": str(_checkpoint_choice(gpt_checkpoint, resource.gpt_weight, ".ckpt")),
+            "sovits_weight": str(_checkpoint_choice(sovits_checkpoint, resource.sovits_weight, ".pth")),
             "bert_path": str(resource.bert_path or ""),
             "cnhubert_path": str(resource.cnhubert_path or ""),
             "gpt_sovits_home": str(resource.source_root),
