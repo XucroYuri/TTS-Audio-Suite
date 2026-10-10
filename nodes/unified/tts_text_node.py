@@ -48,6 +48,7 @@ from utils.voice.multilingual_engine import MultilingualEngine
 from utils.config_sanitizer import ConfigSanitizer
 import comfy.model_management as model_management
 import folder_paths
+from api_bridge.gpu_coordination import coordinated_execution, coordination_active
 from api_bridge.assets import pin_voice_asset
 from api_bridge.path_safety import canonical_path_identity
 from api_bridge.runtime_registry import (
@@ -1148,6 +1149,7 @@ Back to the main narrator voice for the conclusion.""",
             print(f"❌ Voice reference error: {e}")
             return None, None, "", "narrator"
 
+    @coordinated_execution
     def generate_speech(self, TTS_engine: Dict[str, Any], text: str, narrator_voice: str, seed: int,
                        opt_narrator=None, enable_chunking: bool = True, max_chars_per_chunk: int = 400,
                        chunk_combination_method: str = "auto", silence_between_chunks_ms: int = 100,
@@ -2291,6 +2293,8 @@ Back to the main narrator voice for the conclusion.""",
                 
         except Exception as e:
             # Bubble up pause tag + speaker KV incompatibility to trigger ComfyUI modal
+            if coordination_active():
+                raise
             if "is a voice-design model and cannot be used with TTS Text" in str(e):
                 raise
             if "Pause tags are not compatible with force_speaker_kv" in str(e):

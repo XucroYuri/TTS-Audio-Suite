@@ -264,6 +264,9 @@ def _cleanup_temporary_directory(temporary_directory, temporary_path: Path) -> N
 
 
 def _comfyui_interrupt_requested() -> bool:
+    from api_bridge.gpu_coordination import preemption_requested
+    if preemption_requested():
+        return True
     try:
         from comfy.model_management import processing_interrupted
     except ImportError:
@@ -272,6 +275,8 @@ def _comfyui_interrupt_requested() -> bool:
 
 
 def _raise_processing_interrupted(engine_label: str, diagnostic: str) -> None:
+    from api_bridge.gpu_coordination import check_gpu_interrupt
+    check_gpu_interrupt()
     try:
         from comfy.model_management import (
             InterruptProcessingException,
@@ -675,7 +680,8 @@ class ExternalIndexTTSSubprocessProxy:
         deadline = time.monotonic() + self.timeout_seconds
         timeout_error: subprocess.TimeoutExpired | None = None
         while True:
-            if self.interrupt_check():
+            from api_bridge.gpu_coordination import preemption_requested
+            if self.interrupt_check() or preemption_requested():
                 stdout, stderr, cleanup, tree_exit_verified = (
                     self._cleanup_timed_out_process(process)
                 )
