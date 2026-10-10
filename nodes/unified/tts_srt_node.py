@@ -39,6 +39,7 @@ from utils.voice.discovery import get_available_voices
 from utils.audio.processing import AudioProcessingUtils
 from utils.config_sanitizer import ConfigSanitizer
 import comfy.model_management as model_management
+from api_bridge.gpu_coordination import coordinated_execution, coordination_active
 from api_bridge.assets import pin_voice_asset
 from api_bridge.path_safety import canonical_path_identity
 from api_bridge.runtime_registry import (
@@ -1217,6 +1218,7 @@ Hello! This is unified SRT TTS with character switching.
             print(f"❌ Voice reference error: {e}")
             return None, None, "", "narrator"
 
+    @coordinated_execution
     def generate_srt_speech(self, TTS_engine: Dict[str, Any], srt_content: str, narrator_voice: str,
                            seed: int, timing_mode: str, opt_narrator=None, enable_audio_cache: bool = True,
                            fade_for_StretchToFit: float = 0.01, max_stretch_ratio: float = 1.0,
@@ -1817,6 +1819,8 @@ Hello! This is unified SRT TTS with character switching.
                 
         except Exception as e:
             # Bubble up hard incompatibilities so ComfyUI shows a modal error.
+            if coordination_active():
+                raise
             msg = str(e)
             if (
                 "is a voice-design model and cannot be used with TTS SRT" in msg

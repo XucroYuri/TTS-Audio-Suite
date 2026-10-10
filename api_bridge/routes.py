@@ -17,6 +17,7 @@ from . import BRIDGE_PROTOCOL_VERSION
 from .assets import AssetInUseError, AssetQuotaError, get_audio_asset_store
 from .resource_registry import get_resource_registry
 from .runtime_registry import get_runtime_registry
+from .gpu_coordination import capabilities as gpu_coordination_capabilities
 
 
 LOGGER = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ def build_capabilities_payload(registry: Any, *, plugin_version: str) -> dict[st
         "plugin_version": plugin_version,
         "nodes": dict(_NODE_IDS),
         "resources": registry.capabilities(),
+        "gpu_coordination": gpu_coordination_capabilities(),
     }
 
 

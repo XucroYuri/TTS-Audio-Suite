@@ -163,6 +163,8 @@ class BaseChatterBoxNode:
         Raises:
             InterruptedError: If processing has been interrupted
         """
+        from api_bridge.gpu_coordination import check_gpu_interrupt
+        check_gpu_interrupt()
         if model_management.interrupt_processing:
             raise InterruptedError(f"{operation_name} interrupted by user")
     

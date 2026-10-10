@@ -120,6 +120,7 @@ def test_capabilities_payload_is_versioned_redacted_and_has_stable_nodes():
             "save_audio": "SaveAudio",
         },
         "resources": [{"resource_id": "index-main", "engine": "index_tts", "ready": True}],
+        "gpu_coordination": {"enabled": False, "protocol_version": 1, "resource_group": None},
     }
     assert "synthesize" not in json.dumps(payload)
     assert "path" not in json.dumps(payload)

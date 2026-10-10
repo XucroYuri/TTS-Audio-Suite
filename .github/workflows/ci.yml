@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, master]
   push:
-    branches: [main, dev-xu/comfyui-api-bridge]
+    branches: [main, master, dev-xu/comfyui-api-bridge]
 
 jobs:
   unit:
